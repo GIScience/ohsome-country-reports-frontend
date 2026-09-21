@@ -184,7 +184,21 @@ const FORCE_NON_QUALITY_INDICATORS = new Set(['roads-thematic-accuracy', 'land-c
 // change how the indicator is badged or displayed, only which value
 // decides its good/warn/bad *color* (map fill, ring border, hero band
 // border). See loadActiveMapLookup and loadIndicatorCards.
-const QUALITY_CLASS_LEVEL_INDICATORS = new Set(['mapping-saturation']);
+const QUALITY_CLASS_LEVEL_INDICATORS = new Set([
+  'mapping-saturation',
+  'currentness',
+  'building-comparison',
+  'land-cover-completeness',
+]);
+
+// attribute-completeness_* indicators are named per attribute (e.g.
+// attribute-completeness_surface, attribute-completeness_emergency) rather
+// than under one fixed key, so a plain Set membership check can't cover
+// every one of them - this treats any attribute-completeness_* indicator
+// the same as an explicit QUALITY_CLASS_LEVEL_INDICATORS entry.
+function isQualityClassColored(indicator: string): boolean {
+  return QUALITY_CLASS_LEVEL_INDICATORS.has(indicator) || indicator.startsWith('attribute-completeness_');
+}
 
 interface IndicatorCard {
   indicator: string;
@@ -568,7 +582,7 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
     // still the real value, not the coarser 1-5 class.
     const level = isCount
       ? 'neutral'
-      : (QUALITY_CLASS_LEVEL_INDICATORS.has(indicator) && qualityClass != null)
+      : (isQualityClassColored(indicator) && qualityClass != null)
         ? levelFromAvg((qualityClass - 1) / 4)
         : levelFromAvg(avg);
 
@@ -646,7 +660,7 @@ async function loadActiveMapLookup(panelIdx: number, topicName: string) {
   // quality_class instead, rescaled onto the same 0-1 scale the color
   // steps expect (1 -> 0, 5 -> 1), so a class of 3 or below still lands in
   // the same red/amber bands those thresholds already define.
-  panel.mapLookup = QUALITY_CLASS_LEVEL_INDICATORS.has(card.indicator)
+  panel.mapLookup = isQualityClassColored(card.indicator)
     ? Object.fromEntries(
         Object.entries(result.qualityClassLookup).map(([id, qc]) => [id, (qc - 1) / 4])
       )
@@ -1096,7 +1110,7 @@ onUnmounted(() => {
                 @regionClick="handleRegionClick(0, $event)"
               />
               <template v-if="mainPanel.activeIndicatorKey !== 'tag-distribution'">
-                <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount && QUALITY_CLASS_LEVEL_INDICATORS.has(getActiveCard(mainPanel)?.indicator || '')">
+                <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount && isQualityClassColored(getActiveCard(mainPanel)?.indicator || '')">
                   <div><i style="background:#F44336;"></i>Low</div>
                   <div><i style="background:#FFEB3B;"></i>Medium</div>
                   <div><i style="background:#4CAF50;"></i>High</div>
