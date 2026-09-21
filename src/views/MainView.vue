@@ -177,6 +177,15 @@ function isUnavailableDescription(description: string): boolean {
 // the displayed value instead of being (wrongly) rounded to a bare "1".
 const FORCE_NON_QUALITY_INDICATORS = new Set(['roads-thematic-accuracy', 'land-cover-thematic-accuracy']);
 
+// mapping-saturation's raw value can exceed 1.0 and doesn't always agree
+// with the pipeline's own discretized 1-5 quality_class (two regions with
+// a similar, comfortably-"good" raw ratio can still land in different
+// classes) - unlike FORCE_NON_QUALITY_INDICATORS above, this doesn't
+// change how the indicator is badged or displayed, only which value
+// decides its good/warn/bad *color* (map fill, ring border, hero band
+// border). See loadActiveMapLookup and loadIndicatorCards.
+const QUALITY_CLASS_LEVEL_INDICATORS = new Set(['mapping-saturation']);
+
 interface IndicatorCard {
   indicator: string;
   title: string;
@@ -218,6 +227,13 @@ interface ViewPanel {
   attributeOptions: AttributeOption[];
   selectedAttributeIndicator: string;
   mapLookup: Record<string, number>;
+  // Same per-region data as mapLookup, but always the indicator's real
+  // value, never rescaled for map-coloring purposes (see mapLookup's
+  // mapping-saturation special case in loadActiveMapLookup). The hero
+  // band's region-selected display reads from here, not mapLookup, so a
+  // selected region's own percentage stays accurate even when the map's
+  // fill color is driven by something else.
+  mapValueLookup: Record<string, number>;
   activePlotAvailable: boolean;
   featureCount: string;
   totalLength: string;
@@ -236,7 +252,7 @@ function createPanel(id: string, topic: string, layer: string): ViewPanel {
     id, selectedTopic: topic, topicId: 0,
     indicators: [], mapLayer: layer, activeIndicatorKey: 'currentness',
     indicatorCards: [], attributeOptions: [], selectedAttributeIndicator: '',
-    mapLookup: {}, activePlotAvailable: true,
+    mapLookup: {}, mapValueLookup: {}, activePlotAvailable: true,
     featureCount: '', totalLength: '', tile1Label: '',
     schoolSwitchVisible: false, schoolSubTopic: 'operator',
     selectedGeomId: null
@@ -365,18 +381,24 @@ function stackItemKey(item: StackItem): string {
 // district, which pulled the naive mean above 100% too: the hero band could
 // read "101%" while the indicator card, two inches away, read "99%" for the
 // literal same indicator. With a region selected, that region's own value
-// (already sitting in mapLookup - the same per-region data coloring the
-// map) is used instead, which is a real per-district figure, not an average.
+// (from mapValueLookup - the real per-region value, not necessarily what's
+// coloring the map, see mapLookup's mapping-saturation special case) is
+// used instead, which is a real per-district figure, not an average.
 function getHeroBandDisplayValue(panel: ViewPanel): number {
-  if (panel.selectedGeomId && panel.mapLookup[panel.selectedGeomId] != null) {
-    return panel.mapLookup[panel.selectedGeomId];
+  if (panel.selectedGeomId && panel.mapValueLookup[panel.selectedGeomId] != null) {
+    return panel.mapValueLookup[panel.selectedGeomId];
   }
   const card = getActiveCard(panel);
   return card ? card.ringPct / 100 : 0;
 }
+// Reuses the active card's own already-computed level rather than
+// recomputing levelFromAvg(getHeroBandDisplayValue(panel)) independently -
+// those used to always agree (ringPct/avg round-trip through the same
+// thresholds), but mapping-saturation's ring/card level can now come from
+// quality_class instead of the raw value (see loadIndicatorCards), and a
+// second, value-only computation here would silently disagree with it.
 function getHeroBandLevel(panel: ViewPanel): 'good' | 'warn' | 'bad' | 'neutral' {
-  const card = getActiveCard(panel);
-  return card?.isCount ? 'neutral' : levelFromAvg(getHeroBandDisplayValue(panel));
+  return getActiveCard(panel)?.level ?? 'neutral';
 }
 function getHeroBandLevelLabel(panel: ViewPanel): string {
   const card = getActiveCard(panel);
@@ -510,25 +532,45 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
 
   const allIndicators = panel.indicators;
 
-  let getValue: (indicator: string, i: number) => { avg: number; description: string };
+  let getValue: (indicator: string, i: number) => { avg: number; qualityClass: number | null; description: string };
   if (panel.selectedGeomId) {
     const regionUrl = buildUrls(selectedCountry.value, panel.mapLayer).parquetUrl;
     const regionValues = await loadRegionIndicatorValues(regionUrl, topicName, panel.selectedGeomId, allIndicators);
-    getValue = (indicator) => ({ avg: regionValues[indicator]?.value ?? 0, description: regionValues[indicator]?.description || '' });
+    getValue = (indicator) => ({
+      avg: regionValues[indicator]?.value ?? 0,
+      qualityClass: regionValues[indicator]?.qualityClass ?? null,
+      description: regionValues[indicator]?.description || ''
+    });
   } else {
     const results = await loadIndicatorLookups(parquetUrl.value, topicName, allIndicators);
-    getValue = (_, i) => ({ avg: results[i]?.avg ?? 0, description: results[i]?.description || '' });
+    getValue = (_, i) => ({
+      avg: results[i]?.avg ?? 0,
+      qualityClass: results[i]?.qualityClassAvg ?? null,
+      description: results[i]?.description || ''
+    });
   }
 
   const regularCards: IndicatorCard[] = [];
   const attrOptions: AttributeOption[] = [];
 
   allIndicators.forEach((indicator, i) => {
-    const { avg, description } = getValue(indicator, i);
+    const { avg, qualityClass, description } = getValue(indicator, i);
     if (isUnavailableDescription(description)) return;
 
     const isRawCount = isNoQualityDescription(description);
     const isCount = isRawCount || FORCE_NON_QUALITY_INDICATORS.has(indicator);
+    // Same reasoning as the map's fixedColorRange/color source (see
+    // loadActiveMapLookup): mapping-saturation's raw value can exceed 1.0
+    // and doesn't always agree with the pipeline's own discretized
+    // judgment, so the ring/band *color* is driven by quality_class here
+    // too, kept in sync with the map by reusing the same rescale-then-
+    // levelFromAvg formula. The displayed percentage itself is untouched -
+    // still the real value, not the coarser 1-5 class.
+    const level = isCount
+      ? 'neutral'
+      : (QUALITY_CLASS_LEVEL_INDICATORS.has(indicator) && qualityClass != null)
+        ? levelFromAvg((qualityClass - 1) / 4)
+        : levelFromAvg(avg);
 
     if (indicator.startsWith('attribute-completeness_')) {
       attrOptions.push({
@@ -549,7 +591,7 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
         // to a bare integer would (wrongly) show "1" instead of "95%".
         displayValue: isRawCount ? Math.round(avg).toLocaleString('en-US') : `${Math.round(avg * 100)}%`,
         ringPct: isRawCount ? 0 : Math.round(avg * 100),
-        level: isCount ? 'neutral' : levelFromAvg(avg),
+        level,
         isCount,
         description
       });
@@ -593,7 +635,22 @@ async function loadActiveMapLookup(panelIdx: number, topicName: string) {
   const urls = buildUrls(selectedCountry.value, panel.mapLayer);
   const [result] = await loadIndicatorLookups(urls.parquetUrl, topicName, [card.indicator]);
   if (!result) return;
-  panel.mapLookup = result.lookup;
+
+  panel.mapValueLookup = result.lookup;
+
+  // mapping-saturation's raw value is unbounded above 1.0 (a fully-mapped
+  // area can "overshoot" 100%), which the map's fixed 0/25/75% color steps
+  // don't handle meaningfully - two regions at 99% and 110% both just read
+  // as "the same green", so nothing is actually lost by not coloring off
+  // the raw ratio here. Color by the pipeline's own discretized 1-5
+  // quality_class instead, rescaled onto the same 0-1 scale the color
+  // steps expect (1 -> 0, 5 -> 1), so a class of 3 or below still lands in
+  // the same red/amber bands those thresholds already define.
+  panel.mapLookup = QUALITY_CLASS_LEVEL_INDICATORS.has(card.indicator)
+    ? Object.fromEntries(
+        Object.entries(result.qualityClassLookup).map(([id, qc]) => [id, (qc - 1) / 4])
+      )
+    : result.lookup;
 }
 
 // Same margin/automargin/legend/multi-axis handling as the pipeline's other
@@ -1038,7 +1095,12 @@ onUnmounted(() => {
                 @regionClick="handleRegionClick(0, $event)"
               />
               <template v-if="mainPanel.activeIndicatorKey !== 'tag-distribution'">
-                <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount">
+                <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount && QUALITY_CLASS_LEVEL_INDICATORS.has(getActiveCard(mainPanel)?.indicator || '')">
+                  <div><i style="background:#F44336;"></i>Low</div>
+                  <div><i style="background:#FFEB3B;"></i>Medium</div>
+                  <div><i style="background:#4CAF50;"></i>High</div>
+                </div>
+                <div class="map-legend" v-else-if="!getActiveCard(mainPanel)?.isCount">
                   <div><i style="background:#F44336;"></i>0&ndash;25%</div>
                   <div><i style="background:#FFEB3B;"></i>25&ndash;75%</div>
                   <div><i style="background:#4CAF50;"></i>75&ndash;100%</div>
@@ -1158,7 +1220,7 @@ onUnmounted(() => {
 .layer-switch { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .layer-switch button {
   border: 1px solid var(--line-strong); background: transparent; color: var(--ink-soft);
-  font-family: var(--font-body); font-size: 0.76rem; font-weight: 600; padding: 0.35rem 0.65rem;
+  font-family: var(--font-body); font-size: 0.85rem; font-weight: 600; padding: 0.35rem 0.65rem;
   border-radius: var(--radius);
 }
 .layer-switch button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
@@ -1270,7 +1332,7 @@ onUnmounted(() => {
   color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em;
 }
 .plotpanel-desc p {
-  margin: 0; font-size: 0.82rem; line-height: 1.5; color: var(--ink-soft);
+  margin: 0; font-size: 0.95rem; line-height: 1.5; color: var(--ink-soft);
 }
 @media (max-width: 720px) {
   .plotpanel-layout { flex-direction: column; }

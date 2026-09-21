@@ -166,13 +166,27 @@ export async function loadIndicators(parquetUrl: string, topicName: string): Pro
 
 export interface IndicatorLookup {
   lookup: Record<string, number>;
+  // Same shape as `lookup`, keyed off the pipeline's own discretized
+  // 1-5 quality_class column instead of the raw `value`. Only mapping-
+  // saturation's map coloring uses this today (its raw value can exceed
+  // 1.0 - a saturated area can "overshoot" 100% - which the fixed
+  // 0/25/75% color steps don't handle meaningfully); every other
+  // indicator ignores this field. A region missing a quality_class value
+  // (null in the source data) is simply absent from this lookup, same
+  // convention as `lookup`.
+  qualityClassLookup: Record<string, number>;
   avg: number;
+  // Average of quality_class across every matched row - for a country-level
+  // (single-feature) parquet this is just that one row's own class, not a
+  // mean across many regions. null if no row had a quality_class value.
+  qualityClassAvg: number | null;
   description: string;
 }
 
 export interface RegionIndicatorValue {
   value: number;
   description: string;
+  qualityClass: number | null;
 }
 
 /**
@@ -196,7 +210,7 @@ export async function loadRegionIndicatorValues(
     const indicatorFilter = indicatorNames.map(n => `'${n}'`).join(", ");
 
     const result = await runQuery(conn, `
-      SELECT indicator, value, description
+      SELECT indicator, value, quality_class, description
       FROM read_parquet('${tableName}')
       WHERE topic = '${topic}' AND geomID = '${geomId}' AND indicator IN (${indicatorFilter})
     `);
@@ -206,6 +220,7 @@ export async function loadRegionIndicatorValues(
     resultArray.forEach((r: any) => {
       out[String(r.indicator)] = {
         value: r.value != null ? Number(r.value) : 0,
+        qualityClass: r.quality_class != null ? Number(r.quality_class) : null,
         description: r.description || ''
       };
     });
@@ -232,7 +247,7 @@ export async function loadIndicatorLookups(
     const indicatorFilter = indicatorNames.map(n => `'${n}'`).join(", ");
 
     const result = await runQuery(conn,`
-      SELECT indicator, geomID, value, description
+      SELECT indicator, geomID, value, quality_class, description
       FROM read_parquet('${tableName}')
       WHERE ${topicFilter}
         AND indicator IN (${indicatorFilter})
@@ -240,9 +255,9 @@ export async function loadIndicatorLookups(
 
     const resultArray = toArray(result);
 
-    const groups: Record<string, { sum: number; count: number; description: string; lookup: Record<string, number> }> = {};
+    const groups: Record<string, { sum: number; count: number; qcSum: number; qcCount: number; description: string; lookup: Record<string, number>; qualityClassLookup: Record<string, number> }> = {};
     for (const name of indicatorNames) {
-      groups[name] = { sum: 0, count: 0, description: "", lookup: {} };
+      groups[name] = { sum: 0, count: 0, qcSum: 0, qcCount: 0, description: "", lookup: {}, qualityClassLookup: {} };
     }
 
     resultArray.forEach((r: any) => {
@@ -258,11 +273,25 @@ export async function loadIndicatorLookups(
         groups[indicator].description = r.description;
       }
 
+      const geomID = String(r.geomID);
+
+      if (r.quality_class != null) {
+        const qualityClass = Number(r.quality_class);
+        if (!isNaN(qualityClass)) {
+          groups[indicator].qualityClassLookup[geomID] = qualityClass;
+          if (geomID.includes("_")) {
+            const suffix = geomID.split("_").pop();
+            if (suffix) groups[indicator].qualityClassLookup[suffix] = qualityClass;
+          }
+          groups[indicator].qcSum += qualityClass;
+          groups[indicator].qcCount++;
+        }
+      }
+
       if (r.value == null) return;
       const value = Number(r.value);
       if (isNaN(value)) return;
 
-      const geomID = String(r.geomID);
       groups[indicator].lookup[geomID] = value;
 
       if (geomID.includes("_")) {
@@ -281,13 +310,15 @@ export async function loadIndicatorLookups(
       const g = groups[name];
       return {
         lookup: g.lookup,
+        qualityClassLookup: g.qualityClassLookup,
         avg: g.count > 0 ? g.sum / g.count : 0,
+        qualityClassAvg: g.qcCount > 0 ? g.qcSum / g.qcCount : null,
         description: g.description
       };
     });
   } catch (e) {
     console.error("Failed to load indicator lookups:", e);
-    return indicatorNames.map(() => ({ lookup: {}, avg: 0, description: "" }));
+    return indicatorNames.map(() => ({ lookup: {}, qualityClassLookup: {}, avg: 0, qualityClassAvg: null, description: "" }));
   }
 }
 
