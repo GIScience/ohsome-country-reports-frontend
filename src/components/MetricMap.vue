@@ -43,6 +43,15 @@ const props = defineProps<{
   // saturated", not "the single darkest color" just because no region in
   // the current view happens to score higher.
   fixedColorRange?: [number, number];
+  // Some indicators (currently mapping-saturation) color the map from a
+  // rescaled/discretized value (see the parent's mapLookup special case)
+  // that isn't the indicator's real value - e.g. quality class 3 rescaled
+  // to 0.5 for coloring purposes, when the actual saturation ratio might be
+  // 0.92. Without this, the hover popup read that same rescaled number
+  // (showing "50.00%" instead of the real "92.00%"). Optional and defaults
+  // to `lookup` so every other indicator (where lookup already is the real
+  // value) is unaffected.
+  valueLookup?: Record<string, number>;
   // Which region (by the same id used for lookup/feature-state) should be
   // drawn with the "selected" outline - the parent owns this (it's what
   // decides which polygon's plot to show), this component only visualizes it.
@@ -273,11 +282,15 @@ function updateMapData() {
     }
   });
 
-  // Set feature states
+  // Set feature states. "value" drives the fill color (see
+  // buildFillColorExpression) and may be a rescaled/discretized stand-in
+  // for indicators like mapping-saturation - "displayValue" is always the
+  // real, un-rescaled value and is what the hover popup shows.
+  const displayLookup = props.valueLookup ?? props.lookup;
   Object.entries(props.lookup).forEach(([id, val]) => {
     mapInstance!.setFeatureState(
       { source: sourceName, sourceLayer: layerName, id },
-      { value: val }
+      { value: val, displayValue: displayLookup[id] ?? val }
     );
   });
 
@@ -316,7 +329,11 @@ function setupHoverHandlers(sourceName: string, layerName: string, indicatorName
       id: feature.id
     });
 
-    const val = state.value;
+    // "value" (used for the fill color itself, see buildFillColorExpression)
+    // can be a rescaled stand-in rather than the indicator's real value -
+    // "displayValue" is always the real one, so the popup text and the map
+    // color are allowed to legitimately disagree (see valueLookup prop).
+    const val = state.displayValue ?? state.value;
     if (val !== undefined && val !== null) {
       mapInstance!.getCanvas().style.cursor = 'pointer';
       const displayValue = props.isCountIndicator && !props.showAsPercent
@@ -451,14 +468,37 @@ watch(
     const sourceName = props.sourceName;
     const layerName = props.layerName;
 
+    const displayLookup = props.valueLookup ?? newLookup;
     Object.entries(newLookup).forEach(([id, val]) => {
       mapInstance!.setFeatureState(
         { source: sourceName, sourceLayer: layerName, id },
-        { value: val }
+        { value: val, displayValue: displayLookup[id] ?? val }
       );
     });
   },
     // lookup ref is replaced entirely on data load, so identity check is sufficient
+);
+
+// valueLookup can change independently of lookup (e.g. switching indicators
+// where both the color-lookup and the real-value-lookup are replaced
+// together, or a future indicator where they diverge without a color
+// change) - patch displayValue on its own so the popup never shows a value
+// from the indicator that was active before the switch.
+watch(
+  () => props.valueLookup,
+  (newValueLookup) => {
+    if (!isMapInitialized || !mapInstance) return;
+    const sourceName = props.sourceName;
+    const layerName = props.layerName;
+    const displayLookup = newValueLookup ?? props.lookup;
+
+    Object.entries(displayLookup).forEach(([id, val]) => {
+      mapInstance!.setFeatureState(
+        { source: sourceName, sourceLayer: layerName, id },
+        { displayValue: val }
+      );
+    });
+  },
 );
 
 watch(

@@ -1083,6 +1083,7 @@ onUnmounted(() => {
                 :containerId="'main_map_' + mainPanel.id"
                 :pmtilesUrl="pmtilesUrl"
                 :lookup="mainPanel.mapLookup"
+                :valueLookup="mainPanel.mapValueLookup"
                 :indicatorName="getActiveCard(mainPanel)?.indicator || ''"
                 :bounds="bounds"
                 :layerName="mainPanel.mapLayer"
