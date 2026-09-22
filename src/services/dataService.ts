@@ -7,6 +7,16 @@ export interface Country {
   name: string;
 }
 
+// The pipeline writes this exact sentinel into `value`/`quality_class`
+// columns for a region it couldn't compute an indicator for, rather than
+// leaving the cell null - treated the same as null everywhere a value or
+// quality_class is read, so a boundary with no real data is excluded from
+// lookups/averages the same way either representation would be.
+const NO_DATA_VALUE = -999;
+function isNoDataValue(v: unknown): boolean {
+  return v == null || Number(v) === NO_DATA_VALUE;
+}
+
 /** Cheap existence check for any file this app reads from S3 - a plain HEAD
  * request, no listing permission needed. Used both for one layer's parquet
  * file (not every grid layer has been processed for every country yet, and
@@ -22,20 +32,20 @@ export async function checkParquetExists(url: string): Promise<boolean> {
   }
 }
 
-export async function fetchAvailableCountries(): Promise<Country[]> {
+async function loadCountryYaml(): Promise<Record<string, any>> {
   const yamlUrl = "https://hot.storage.heigit.org/heigit-hdx-public/oqapi_hdx/countries/countries.yaml";
-
-  let countryYamlData: Record<string, any> = {};
-
   try {
     const respYaml = await fetch(yamlUrl);
     const textYaml = await respYaml.text();
     const yamlModule = await import("js-yaml");
-    countryYamlData = yamlModule.load(textYaml) as Record<string, any>;
+    return yamlModule.load(textYaml) as Record<string, any>;
   } catch (e) {
     console.warn("Could not load YAML, using fallback");
+    return {};
   }
+}
 
+export async function fetchAvailableCountries(): Promise<Country[]> {
   const countryExceptions: Record<string, string> = {
     "cote-d-ivoire": "Côte d'Ivoire",
     "sri-lanka": "Sri Lanka",
@@ -56,15 +66,22 @@ export async function fetchAvailableCountries(): Promise<Country[]> {
       .join(" ");
   }
 
-  // Checking each maintained candidate directly (see config/countries.ts)
-  // instead of listing the bucket: a HEAD request needs no special S3
-  // permission, unlike the ListBucket call a bucket listing would need.
-  const existenceChecks = await Promise.all(
-    CANDIDATE_COUNTRIES.map(async (code) => {
-      const url = `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${code}/${code}_boundaries.pmtiles`;
-      return (await checkParquetExists(url)) ? code : null;
-    })
-  );
+  // The display-name YAML and the per-country existence checks are
+  // independent network calls - run them together instead of making the
+  // existence checks (which gate the very first map render) wait behind the
+  // YAML fetch and its dynamic js-yaml import.
+  const [countryYamlData, existenceChecks] = await Promise.all([
+    loadCountryYaml(),
+    // Checking each maintained candidate directly (see config/countries.ts)
+    // instead of listing the bucket: a HEAD request needs no special S3
+    // permission, unlike the ListBucket call a bucket listing would need.
+    Promise.all(
+      CANDIDATE_COUNTRIES.map(async (code) => {
+        const url = `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${code}/${code}_boundaries.pmtiles`;
+        return (await checkParquetExists(url)) ? code : null;
+      })
+    )
+  ]);
 
   const countries = existenceChecks
     .filter((code): code is string => code !== null)
@@ -181,12 +198,22 @@ export interface IndicatorLookup {
   // mean across many regions. null if no row had a quality_class value.
   qualityClassAvg: number | null;
   description: string;
+  // True as soon as at least one boundary in this layer has a real (non
+  // -999/null) value - false means every single boundary came back with no
+  // data, which is the "disable this indicator, nothing to show" case
+  // rather than a boundary-by-boundary gap (those still just render grey,
+  // see `lookup`).
+  hasData: boolean;
 }
 
 export interface RegionIndicatorValue {
   value: number;
   description: string;
   qualityClass: number | null;
+  // False when this region's own row is missing or holds the pipeline's
+  // -999 "not computed" sentinel - `value` is meaningless (0) in that case,
+  // not a genuine zero reading.
+  hasData: boolean;
 }
 
 /**
@@ -219,9 +246,10 @@ export async function loadRegionIndicatorValues(
     const out: Record<string, RegionIndicatorValue> = {};
     resultArray.forEach((r: any) => {
       out[String(r.indicator)] = {
-        value: r.value != null ? Number(r.value) : 0,
-        qualityClass: r.quality_class != null ? Number(r.quality_class) : null,
-        description: r.description || ''
+        value: isNoDataValue(r.value) ? 0 : Number(r.value),
+        qualityClass: isNoDataValue(r.quality_class) ? null : Number(r.quality_class),
+        description: r.description || '',
+        hasData: !isNoDataValue(r.value)
       };
     });
     return out;
@@ -275,7 +303,7 @@ export async function loadIndicatorLookups(
 
       const geomID = String(r.geomID);
 
-      if (r.quality_class != null) {
+      if (!isNoDataValue(r.quality_class)) {
         const qualityClass = Number(r.quality_class);
         if (!isNaN(qualityClass)) {
           groups[indicator].qualityClassLookup[geomID] = qualityClass;
@@ -288,7 +316,11 @@ export async function loadIndicatorLookups(
         }
       }
 
-      if (r.value == null) return;
+      // A -999/null value means this boundary has no data - left out of
+      // `lookup` (and therefore uncolored on the map, same as any other gap
+      // in the data - see MetricMap's default grey fill) rather than
+      // plotted as a real zero.
+      if (isNoDataValue(r.value)) return;
       const value = Number(r.value);
       if (isNaN(value)) return;
 
@@ -313,12 +345,13 @@ export async function loadIndicatorLookups(
         qualityClassLookup: g.qualityClassLookup,
         avg: g.count > 0 ? g.sum / g.count : 0,
         qualityClassAvg: g.qcCount > 0 ? g.qcSum / g.qcCount : null,
-        description: g.description
+        description: g.description,
+        hasData: g.count > 0
       };
     });
   } catch (e) {
     console.error("Failed to load indicator lookups:", e);
-    return indicatorNames.map(() => ({ lookup: {}, qualityClassLookup: {}, avg: 0, qualityClassAvg: null, description: "" }));
+    return indicatorNames.map(() => ({ lookup: {}, qualityClassLookup: {}, avg: 0, qualityClassAvg: null, description: "", hasData: false }));
   }
 }
 

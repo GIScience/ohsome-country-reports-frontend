@@ -687,6 +687,37 @@ isEmbed.value = inIframe || hasEmbedParam || hasIframe2ColParam;</code></pre>
           </p>
         </div>
 
+        <div class="callout info">
+          <div class="callout-label">Performance: a few sequential waterfalls were flattened into parallel loads</div>
+          <p>
+            A handful of independent network/query steps used to run one after another purely
+            because of the order they were <code>await</code>ed, not because of any real data
+            dependency - each one adding its full round-trip to how long the dashboard felt slow
+            to load or switch:
+          </p>
+          <ul>
+            <li><code>fetchAvailableCountries()</code> used to <code>await</code> the
+            <code>countries.yaml</code> fetch (plus its dynamic <code>js-yaml</code> import)
+            before starting the <code>CANDIDATE_COUNTRIES</code> existence checks above, even
+            though the display-name YAML and the existence checks don't depend on each other.
+            Both now run in one <code>Promise.all</code> - this gates the very first map render,
+            so it shaves a full round-trip off every initial page load.</li>
+            <li><code>loadPanelTopicData()</code> used to <code>await loadIndicatorCards()</code>
+            and <code>refreshActiveIndicator()</code> in full before even starting
+            <code>loadPanelTreemap()</code>, even though the treemap reads its own
+            (tag-distribution) parquet file and doesn't depend on either. The treemap load now
+            runs in <code>Promise.all</code> alongside that chain - it still has to run
+            <em>after</em> <code>loadIndicatorCards()</code> sets <code>activeIndicatorKey</code>
+            and <em>before</em> <code>refreshActiveIndicator()</code> reads it, which is the one
+            real dependency in that pipeline, see §9.</li>
+          </ul>
+          <p>
+            <code>handleMapLayerChange()</code> already parallelized its equivalent set of calls
+            with <code>Promise.all</code>; <code>loadPanelTopicData()</code> was the one place
+            that hadn't been brought in line with that pattern.
+          </p>
+        </div>
+
         <h3>PMTiles: the map shapes</h3>
         <p>
           <a href="https://github.com/protomaps/PMTiles" target="_blank">PMTiles</a> packs an
@@ -918,26 +949,53 @@ const mainPanel = computed(() =&gt; panels.value[0]);</code></pre>
             </ul>
           </li>
           <li><strong>Vue re-renders on its own.</strong> None of the above touches the DOM directly. Every one of those calls just assigns new values onto <code>panel.*</code> properties, and Vue's reactivity re-renders whatever template expression reads them: the hero band's headline number, the sidebar's indicator list, the map's <code>:lookup</code> prop, the plot container.</li>
-          <li><strong><code>MetricMap.vue</code> reacts to its own prop changes</strong> through <code>watch()</code>. A new <code>topicId</code> triggers <code>updateMapData()</code>, which rebuilds the colored layer, but does <em>not</em> re-fit the camera to the country's bounds; a <code>lastFittedBoundsKey</code> guard makes sure <code>fitBounds()</code> only fires when the <code>bounds</code> prop itself actually changes, which only happens on a real country switch. A new <code>lookup</code> object patches each shape's <code>feature-state</code> without a full rebuild, unless it's a count-type indicator, whose color scale depends on the lookup's own min and max (or a <code>fixedColorRange</code>, §10) and has to rebuild regardless.</li>
+          <li><strong><code>MetricMap.vue</code> reacts to its own prop changes</strong> through <code>watch()</code>. A new <code>topicId</code> triggers <code>updateMapData()</code>, which removes and re-adds the fill/outline <em>layers</em> - but, since the fix described below, reuses the underlying pmtiles vector <em>source</em> as long as the country hasn't changed, instead of tearing it down and re-fetching every visible tile from scratch. It does <em>not</em> re-fit the camera to the country's bounds; a <code>lastFittedBoundsKey</code> guard makes sure <code>fitBounds()</code> only fires when the <code>bounds</code> prop itself actually changes, which only happens on a real country switch. A new <code>lookup</code> object patches each shape's <code>feature-state</code> through <code>applyLookupFeatureStates()</code> without a full rebuild, unless it's a count-type indicator, whose color scale depends on the lookup's own min and max (or a <code>fixedColorRange</code>, §10) and has to rebuild regardless.</li>
           <li><strong>Plotly draws the plot.</strong> <code>loadActiveIndicatorPlot(0)</code> and <code>loadPanelTreemap(0)</code> both end in a <code>Plotly.react(containerId, fig.data, fig.layout, {...})</code> call against a uniquely-id'd <code>&lt;div&gt;</code> (<code>active-indicator-plot-a</code>, <code>tag-treemap-a</code>). <code>Plotly.react</code>, not <code>Plotly.newPlot</code>, runs everywhere, so re-rendering the same chart with new data updates it instead of tearing the whole thing down and rebuilding it. Both calls are followed by <code>await nextTick()</code> then an explicit <code>Plotly.Plots.resize(containerId)</code>, see the callout below for why.</li>
         </ol>
+        <div class="callout warn">
+          <div class="callout-label">Fixed: some regions could stay grey ("no data") after a topic switch</div>
+          <p>
+            Before this fix, step 5 above (<code>updateMapData()</code>) unconditionally removed
+            and re-added the pmtiles <em>source</em> on every topic/indicator/layer switch, even
+            though the source is one file covering every grid layer and only actually needs to
+            change on a real country switch. That forced MapLibre to re-fetch and re-parse every
+            visible tile from scratch on each switch - and because that re-parse is async, it
+            could race against step 3's new <code>lookup</code> arriving: the topic-change's
+            <code>updateMapData()</code> ran immediately (using whichever lookup was <em>still</em>
+            bound at that instant, i.e. the previous topic's), wiping the source; the new topic's
+            lookup then arrived and patched feature-state, but if the freshly re-added source's
+            tiles hadn't finished reloading yet, those tiles came up with no matching
+            feature-state once they did load - stuck grey until some later switch's timing
+            happened to land the other way. Confirmed reproducible at the adm1 layer (larger,
+            more numerous tiles than adm0 make the race window wider), matching a real bug report
+            (Venezuela, Hospitals topic). Fixed by only rebuilding the source when the pmtiles URL
+            itself changes (<code>currentSourceUrl</code> tracking in <code>MetricMap.vue</code>);
+            since the source is no longer wiped on every switch, stale feature-state now has to be
+            cleared explicitly instead, which <code>applyLookupFeatureStates()</code> does via
+            <code>removeFeatureState()</code> for exactly the ids that dropped out of the new
+            lookup.
+          </p>
+        </div>
         <p>
           Switching countries (<code>loadCountry()</code>) is the same idea, one level up.
           Re-derive the available layers and topics, reset the panel to a fresh default topic,
           and call <code>loadPanelTopicData(0)</code>.
         </p>
-        <div class="callout danger">
-          <div class="callout-label"><code>loadCountry()</code> doesn't guard against overlapping calls</div>
+        <div class="callout info">
+          <div class="callout-label">Fixed: <code>loadCountry()</code> now guards against overlapping calls</div>
           <p>
-            If a user switches country again before the previous <code>loadCountry()</code> call
-            has finished (plausible on a slow connection, since indicator data for one country
-            can still be loading when the next one is selected), both calls run concurrently and
-            whichever finishes last simply overwrites the other's results, including
-            <code>panel.mapLayer</code>, which can leave the map layer from country A paired with
-            country B's code in a subsequent query, or a "Data current as of" date from the
-            wrong country. Confirmed reproducible under a throttled connection. Not fixed, no
-            request-generation token or <code>AbortController</code> exists here yet, this is
-            worth doing before it causes a confusing bug report. See <a href="#rough-edges">§14</a>.
+            If a user switched country again before the previous <code>loadCountry()</code> call
+            had finished (plausible on a slow connection, since indicator data for one country
+            can still be loading when the next one is selected), both calls used to run
+            concurrently, and whichever finished last simply overwrote the other's results,
+            including <code>panel.mapLayer</code>, which could leave the map layer from country A
+            paired with country B's code in a subsequent query, or a "Data current as of" date
+            from the wrong country. Confirmed reproducible under a throttled connection. Fixed
+            with a request-generation counter (<code>loadCountryGeneration</code> /
+            <code>isCurrent()</code> in <code>loadCountry()</code>): each call captures its own
+            generation number when it starts, and bails out at every subsequent <code>await</code>
+            once a newer call has superseded it, instead of writing stale results over the newer
+            call's state.
           </p>
         </div>
 
@@ -1307,12 +1365,13 @@ jobs:
           <li>Country list needs manual maintenance. Adding a country means editing <code>CANDIDATE_COUNTRIES</code> by hand, because the S3 <code>ListBucket</code> permission this could otherwise be automated with is still blocked. §2.</li>
           <li>No automated tests of any kind. Type-checking (<code>vue-tsc</code>) is the only automated gate; manual browser verification is mandatory for every change.</li>
           <li>No ESLint or Prettier configuration. Code style is whatever the existing file already looks like. Match it by hand.</li>
-          <li><code>loadCountry()</code> doesn't guard against overlapping calls. Switching country again before the previous switch finishes can cross-contaminate state (e.g. one country's map layer paired with another's country code). Confirmed reproducible under a slow connection, not fixed. §9.</li>
           <li><code>MAX()</code>/<code>MIN()</code> over a <code>varchar</code> column silently truncates in the current DuckDB-WASM build. Confirmed directly, cost real debugging time before the root cause was found. Use <code>ORDER BY ... LIMIT 1</code> instead. §7.</li>
           <li>Several design tokens in <code>main.css</code> are now fully dead (<code>--font-sans</code>, <code>--color-bg</code>, <code>--color-card-bg</code>, <code>--color-text</code>, <code>--border-radius</code>, <code>--font-size-text</code>), left over from the removed iframe-2col layout. Safe to delete, just grep first. §11.</li>
           <li><code>loadTagCoverage()</code> in <code>dataService.ts</code> is exported but has zero call sites, left over from a removed attribute-completeness bar chart. Safe to delete. §7, §10.</li>
           <li><code>MainView.vue</code> is a single file, around 1,400 lines. There's no enforced component boundary between sidebar controls, the hero band, indicator picking, the region drill-down, and so on. If this file keeps growing, pulling some of that out into dedicated components, the way <code>MetricMap.vue</code> and the two indicator card components already are, is a reasonable next step. It's noticeably smaller than it used to be (it briefly exceeded 2,800 lines before the Split View and iframe-2col removal), so this is less urgent than it once was.</li>
           <li>Tailwind is installed but mostly dead weight. §11. Not harmful, just don't expect to find conventions for using it.</li>
+          <li>Every parquet file is fetched as a whole file into memory (<code>registerParquetFile()</code>, §7) rather than queried in place over HTTP range requests, even when a query only touches one topic/indicator. Worth investigating whether DuckDB-WASM's native remote-parquet reading could cut bytes transferred for the larger grid-layer files, once <code>hot.storage.heigit.org</code>'s range-request/CORS support is confirmed. Not started.</li>
+          <li>Every DuckDB-WASM query, across every card/plot/treemap, is serialized through one shared connection and one operation queue (<code>enqueue()</code> in <code>duckdb.ts</code>, §7) - safe (this is what fixes the "No magic bytes found" corruption), but means queries never actually run concurrently even when they're unrelated. Opening a second connection for independent query sets might allow real parallelism, but needs a deliberate concurrency-safety test first, not just a config flip. Not started.</li>
         </ul>
       </section>
 

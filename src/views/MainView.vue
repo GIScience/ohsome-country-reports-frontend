@@ -208,14 +208,31 @@ interface IndicatorCard {
   level: 'good' | 'warn' | 'bad' | 'neutral';
   isCount: boolean;
   description: string;
+  // True when every boundary in the current layer came back with no data
+  // (the pipeline's -999 sentinel, or a missing row) for this indicator -
+  // nothing to show or color the map with, so the card is shown but not
+  // selectable, the same treatment as an unavailable grid layer (§2/§14 of
+  // the maintainer guide). A boundary-by-boundary gap alone doesn't set
+  // this - those still just render grey on the map, see loadActiveMapLookup.
+  disabled: boolean;
+  // True when there's no region selected and the country-level (adm0) file
+  // has no data for this indicator, even though the card itself may still
+  // be enabled (a non-country layer, e.g. adm1, can have data adm0
+  // doesn't). The displayed avg/plot/description are always country-level,
+  // so this is when they'd otherwise silently show a misleading "0%" and
+  // an empty chart instead of explaining that the data lives one layer
+  // down, reachable by clicking a region on the map.
+  noCountryLevelData: boolean;
 }
 interface AttributeOption {
   indicator: string;
   label: string;
   displayValue: string;
   ringPct: number;
-  level: 'good' | 'warn' | 'bad';
+  level: 'good' | 'warn' | 'bad' | 'neutral';
   description: string;
+  disabled: boolean;
+  noCountryLevelData: boolean;
 }
 
 function levelFromAvg(avg: number): 'good' | 'warn' | 'bad' {
@@ -296,6 +313,8 @@ function getActiveCard(panel: ViewPanel): IndicatorCard | null {
       ringPct: 0,
       level: 'neutral',
       isCount: true,
+      disabled: false,
+      noCountryLevelData: false,
       description: 'Distribution of mapped features grouped by tag. The map shows no per-region values for this.'
     };
   }
@@ -312,6 +331,8 @@ function getActiveCard(panel: ViewPanel): IndicatorCard | null {
       ringPct: fromAttr.ringPct,
       level: fromAttr.level,
       isCount: false,
+      disabled: fromAttr.disabled,
+      noCountryLevelData: fromAttr.noCountryLevelData,
       description: fromAttr.description
     };
   }
@@ -320,6 +341,16 @@ function getActiveCard(panel: ViewPanel): IndicatorCard | null {
 
 function isAttributeGroupActive(panel: ViewPanel): boolean {
   return panel.attributeOptions.some(o => o.indicator === panel.activeIndicatorKey);
+}
+
+// True when the active indicator has data somewhere (enabled at all, see
+// noCountryLevelData on IndicatorCard) but not at the country level
+// currently being displayed - the plot/description would otherwise show a
+// misleading empty chart / "0%" instead of explaining where the data
+// actually is. Never true once a region is selected, since the plot then
+// already reads that region's own (non-country) layer.
+function isActiveIndicatorCountryLevelUnavailable(panel: ViewPanel): boolean {
+  return !panel.selectedGeomId && (getActiveCard(panel)?.noCountryLevelData ?? false);
 }
 
 // Forced non-quality indicators (see FORCE_NON_QUALITY_INDICATORS) keep a
@@ -416,16 +447,20 @@ function getHeroBandLevel(panel: ViewPanel): 'good' | 'warn' | 'bad' | 'neutral'
 }
 function getHeroBandLevelLabel(panel: ViewPanel): string {
   const card = getActiveCard(panel);
-  if (card?.isCount) return '';
+  // A disabled (no-data) card's level is 'neutral' too, same as a count
+  // indicator's - neither is a "good/bad" verdict worth labeling High/
+  // Medium/Low, so both skip the label the same way.
+  if (card?.isCount || card?.disabled) return '';
   const l = getHeroBandLevel(panel);
   return l === 'good' ? 'High' : l === 'warn' ? 'Medium' : 'Low';
 }
 // Count indicators (e.g. user-activity, tag distribution) show
 // activeCard.displayValue, which is already region-aware - no separate
-// lookup needed here.
+// lookup needed here. A disabled (no-data) card's displayValue is already
+// '—' rather than a real percentage, for the same reason.
 function getHeroBandValueText(panel: ViewPanel): string {
   const card = getActiveCard(panel);
-  return card?.isCount ? card.displayValue : `${Math.round(getHeroBandDisplayValue(panel) * 100)}%`;
+  return (card?.isCount || card?.disabled) ? card.displayValue : `${Math.round(getHeroBandDisplayValue(panel) * 100)}%`;
 }
 
 function handleHashRouting() {
@@ -461,7 +496,17 @@ watch(selectedCountry, async (newCountry) => {
   await loadCountry(newCountry, true);
 });
 
+// Bumped on every loadCountry() call so an older, still-in-flight call can
+// tell it's been superseded (e.g. the user picked a second country before
+// the first one finished loading) and stop touching shared state instead of
+// cross-contaminating it with the newer call's results - confirmed
+// reproducible under a slow connection before this guard was added.
+let loadCountryGeneration = 0;
+
 async function loadCountry(code: string, updateTopics: boolean) {
+  const myGeneration = ++loadCountryGeneration;
+  const isCurrent = () => myGeneration === loadCountryGeneration;
+
   isLoading.value = true;
 
   const layers = getCountryLayers(code);
@@ -485,6 +530,8 @@ async function loadCountry(code: string, updateTopics: boolean) {
         return exists ? layer : null;
       }))
     ]);
+
+    if (!isCurrent()) return;
 
     const newAvailableLayers = new Set(layerChecks.filter((l): l is string => l !== null));
     availableLayers.value = newAvailableLayers;
@@ -514,17 +561,19 @@ async function loadCountry(code: string, updateTopics: boolean) {
     if (updateTopics) {
       // New country - reset to a fresh default topic.
       const availableTopics = await loadAvailableTopics(urls.parquetUrl);
+      if (!isCurrent()) return;
       availableTopicsForCountry.value = availableTopics;
       const firstTopic = availableTopics.includes('roads') ? 'roads' : (availableTopics[0] || '');
       panels.value = [createPanel('a', firstTopic, defaultLayer)];
     }
 
     await loadPanelTopicData(0);
+    if (!isCurrent()) return;
     updateHash(code, panels.value[0]?.selectedTopic || '');
   } catch (e) {
     console.error('Failed to load country:', e);
   } finally {
-    isLoading.value = false;
+    if (isCurrent()) isLoading.value = false;
   }
 }
 
@@ -546,21 +595,49 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
 
   const allIndicators = panel.indicators;
 
-  let getValue: (indicator: string, i: number) => { avg: number; qualityClass: number | null; description: string };
+  let getValue: (indicator: string, i: number) => { avg: number; qualityClass: number | null; description: string; hasData: boolean; countryLevelHasData: boolean };
   if (panel.selectedGeomId) {
     const regionUrl = buildUrls(selectedCountry.value, panel.mapLayer).parquetUrl;
     const regionValues = await loadRegionIndicatorValues(regionUrl, topicName, panel.selectedGeomId, allIndicators);
     getValue = (indicator) => ({
       avg: regionValues[indicator]?.value ?? 0,
       qualityClass: regionValues[indicator]?.qualityClass ?? null,
-      description: regionValues[indicator]?.description || ''
+      description: regionValues[indicator]?.description || '',
+      hasData: regionValues[indicator]?.hasData ?? false,
+      // Not applicable once a region is picked - the plot/description
+      // already come from that region's own layer at that point, not the
+      // country level, so nothing needs the "click a region" nudge.
+      countryLevelHasData: true
     });
   } else {
-    const results = await loadIndicatorLookups(parquetUrl.value, topicName, allIndicators);
+    const layerUrl = buildUrls(selectedCountry.value, panel.mapLayer).parquetUrl;
+    // The displayed average/description are deliberately always the
+    // country-level figure (see getHeroBandDisplayValue) - but whether an
+    // indicator is disabled has to reflect the layer actually on screen,
+    // not the country-level file: adm0 having no data for an indicator
+    // doesn't mean adm1 or h3 don't, and vice versa. Only re-query when the
+    // selected layer isn't the country level to begin with (adm0 selected
+    // means both URLs are already the same file).
+    const [results, layerResults] = await Promise.all([
+      loadIndicatorLookups(parquetUrl.value, topicName, allIndicators),
+      layerUrl === parquetUrl.value
+        ? Promise.resolve(null)
+        : loadIndicatorLookups(layerUrl, topicName, allIndicators)
+    ]);
     getValue = (_, i) => ({
       avg: results[i]?.avg ?? 0,
       qualityClass: results[i]?.qualityClassAvg ?? null,
-      description: results[i]?.description || ''
+      description: results[i]?.description || '',
+      // Enabled/disabled follows the layer on screen (adm1 having data is
+      // enough to keep the card clickable even if adm0 has none) - but the
+      // avg/plot/description above are still the country-level ones, so a
+      // card can be enabled *and* have nothing real to show at the same
+      // time. That combination is flagged separately via
+      // countryLevelHasData rather than folded into hasData/disabled, so
+      // the UI can tell "truly nothing anywhere" apart from "nothing at
+      // this administrative level, but there is data one click away".
+      hasData: (layerResults ?? results)[i]?.hasData ?? false,
+      countryLevelHasData: results[i]?.hasData ?? false
     });
   }
 
@@ -568,7 +645,7 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
   const attrOptions: AttributeOption[] = [];
 
   allIndicators.forEach((indicator, i) => {
-    const { avg, qualityClass, description } = getValue(indicator, i);
+    const { avg, qualityClass, description, hasData, countryLevelHasData } = getValue(indicator, i);
     if (isUnavailableDescription(description)) return;
 
     const isRawCount = isNoQualityDescription(description);
@@ -579,21 +656,38 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
     // judgment, so the ring/band *color* is driven by quality_class here
     // too, kept in sync with the map by reusing the same rescale-then-
     // levelFromAvg formula. The displayed percentage itself is untouched -
-    // still the real value, not the coarser 1-5 class.
-    const level = isCount
+    // still the real value, not the coarser 1-5 class. avg/qualityClass
+    // are country-level, so it's countryLevelHasData that governs whether
+    // they're meaningful here, not hasData (which can be true purely from
+    // a non-country layer having data - see countryLevelHasData above).
+    const level = !countryLevelHasData
       ? 'neutral'
-      : (isQualityClassColored(indicator) && qualityClass != null)
-        ? levelFromAvg((qualityClass - 1) / 4)
-        : levelFromAvg(avg);
+      : isCount
+        ? 'neutral'
+        : (isQualityClassColored(indicator) && qualityClass != null)
+          ? levelFromAvg((qualityClass - 1) / 4)
+          : levelFromAvg(avg);
+
+    // A country-level row can carry a real description even when its value
+    // is the -999/null "no data" sentinel (loadIndicatorLookups records the
+    // description before it knows whether the value is usable). Once
+    // noCountryLevelData is showing the "click a region" message in the
+    // plot panel, the "About this indicator" box needs to stay empty
+    // instead of contradicting it with a leftover country-level blurb -
+    // v-if="...description" on that box already hides it for an empty
+    // string, so blanking it here is enough.
+    const displayedDescription = countryLevelHasData ? description : '';
 
     if (indicator.startsWith('attribute-completeness_')) {
       attrOptions.push({
         indicator,
         label: prettifyIndicator(indicator.replace('attribute-completeness_', '')),
-        displayValue: `${Math.round(avg * 100)}%`,
-        ringPct: Math.round(avg * 100),
-        level: levelFromAvg(avg),
-        description
+        displayValue: countryLevelHasData ? `${Math.round(avg * 100)}%` : '—',
+        ringPct: countryLevelHasData ? Math.round(avg * 100) : 0,
+        level: countryLevelHasData ? levelFromAvg(avg) : 'neutral',
+        description: displayedDescription,
+        disabled: !hasData,
+        noCountryLevelData: !countryLevelHasData
       });
     } else {
       regularCards.push({
@@ -603,11 +697,13 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
         // into the non-quality/count-badge treatment below, but its own
         // value is still a real 0-1 ratio, not a raw count - rounding that
         // to a bare integer would (wrongly) show "1" instead of "95%".
-        displayValue: isRawCount ? Math.round(avg).toLocaleString('en-US') : `${Math.round(avg * 100)}%`,
-        ringPct: isRawCount ? 0 : Math.round(avg * 100),
+        displayValue: !countryLevelHasData ? '—' : isRawCount ? Math.round(avg).toLocaleString('en-US') : `${Math.round(avg * 100)}%`,
+        ringPct: !countryLevelHasData ? 0 : isRawCount ? 0 : Math.round(avg * 100),
         level,
         isCount,
-        description
+        disabled: !hasData,
+        noCountryLevelData: !countryLevelHasData,
+        description: displayedDescription
       });
     }
   });
@@ -617,11 +713,17 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
 
   if (attrOptions.length > 0) {
     const preferred = topicConfig[topicName]?.completenessIndicator;
-    const stillValid = attrOptions.some(o => o.indicator === panel.selectedAttributeIndicator);
+    const stillValid = attrOptions.some(o => o.indicator === panel.selectedAttributeIndicator && !o.disabled);
     if (!stillValid) {
-      panel.selectedAttributeIndicator = (preferred && attrOptions.some(o => o.indicator === preferred))
-        ? preferred
-        : attrOptions[0].indicator;
+      // Prefer a variant that actually has data - falls back to the
+      // product-preferred one (or the first option) only when every variant
+      // is disabled, since there's no better choice available then anyway.
+      const availableOptions = attrOptions.filter(o => !o.disabled);
+      const preferredAvailable = preferred && availableOptions.find(o => o.indicator === preferred);
+      panel.selectedAttributeIndicator = preferredAvailable
+        ? preferredAvailable.indicator
+        : availableOptions[0]?.indicator
+          ?? (preferred && attrOptions.some(o => o.indicator === preferred) ? preferred : attrOptions[0].indicator);
     }
   } else {
     panel.selectedAttributeIndicator = '';
@@ -629,7 +731,16 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
 
   const selectableKeys = [...regularCards.map(c => c.indicator), ...attrOptions.map(o => o.indicator)];
   if (!selectableKeys.includes(panel.activeIndicatorKey) && panel.activeIndicatorKey !== TAG_DISTRIBUTION_KEY) {
-    panel.activeIndicatorKey = selectableKeys.includes('currentness') ? 'currentness' : (selectableKeys[0] || 'currentness');
+    // Prefer an indicator that actually has data for this layer over one
+    // that's disabled - only fall back to a disabled one (or 'currentness'
+    // by name) when literally everything is empty, so a topic switch
+    // doesn't land on a blank-map indicator while a usable one sits right
+    // next to it in the list.
+    const availableKeys = [...regularCards.filter(c => !c.disabled).map(c => c.indicator), ...attrOptions.filter(o => !o.disabled).map(o => o.indicator)];
+    panel.activeIndicatorKey = availableKeys.includes('currentness')
+      ? 'currentness'
+      : availableKeys[0]
+        ?? (selectableKeys.includes('currentness') ? 'currentness' : (selectableKeys[0] || 'currentness'));
   }
 }
 
@@ -921,9 +1032,18 @@ async function loadPanelTopicData(panelIdx: number) {
   const newIndicators = await loadIndicators(parquetUrl.value, topicName);
   panel.indicators = newIndicators;
 
-  await loadIndicatorCards(panelIdx, topicName);
-  await refreshActiveIndicator(panelIdx, topicName);
-  await loadPanelTreemap(panelIdx);
+  // The treemap reads its own (tag-distribution) parquet file and doesn't
+  // depend on the indicator cards or active-indicator refresh below, so it
+  // can fetch/load in parallel with them instead of waiting for both to
+  // finish first - loadIndicatorCards does have to go before
+  // refreshActiveIndicator though, since it's what sets activeIndicatorKey.
+  await Promise.all([
+    (async () => {
+      await loadIndicatorCards(panelIdx, topicName);
+      await refreshActiveIndicator(panelIdx, topicName);
+    })(),
+    loadPanelTreemap(panelIdx)
+  ]);
 
   const t = topicName.toLowerCase();
   panel.schoolSwitchVisible = t.startsWith('school') || t.startsWith('hospital') || t.startsWith('healthcare-primary');
@@ -1027,6 +1147,7 @@ onUnmounted(() => {
                   :ringPct="item.card.ringPct"
                   :level="item.card.level"
                   :active="item.card.indicator === mainPanel.activeIndicatorKey"
+                  :disabled="item.card.disabled"
                   @click="selectIndicatorCard(0, item.card.indicator)"
                 />
                 <AttributeCompletenessCard
@@ -1034,6 +1155,7 @@ onUnmounted(() => {
                   :options="mainPanel.attributeOptions"
                   :selected="mainPanel.selectedAttributeIndicator"
                   :active="isAttributeGroupActive(mainPanel)"
+                  :disabled="mainPanel.attributeOptions.every(o => o.disabled)"
                   @select="(indicator: string) => selectAttributeOption(0, indicator)"
                 />
                 <IndicatorGaugeCard
@@ -1155,7 +1277,8 @@ onUnmounted(() => {
                 </div>
                 <div v-show="mainPanel.activeIndicatorKey !== 'tag-distribution'">
                   <h3>{{ getActiveCard(mainPanel) ? prettifyIndicator(getActiveCard(mainPanel)!.indicator) : '' }}</h3>
-                  <p v-if="!mainPanel.activePlotAvailable" class="plot-unavailable">No chart available for this indicator.</p>
+                  <p v-if="isActiveIndicatorCountryLevelUnavailable(mainPanel)" class="plot-unavailable">The indicator is not available on country level. Click on the map to get more information for a chosen region.</p>
+                  <p v-else-if="!mainPanel.activePlotAvailable" class="plot-unavailable">No chart available for this indicator.</p>
                   <div v-show="mainPanel.activePlotAvailable" class="plot-container" :id="'active-indicator-plot-' + mainPanel.id"></div>
                 </div>
               </div>

@@ -96,6 +96,55 @@ function boundsKey(b: typeof props.bounds): string | null {
   return b ? `${b.minLon},${b.minLat},${b.maxLon},${b.maxLat}` : null;
 }
 
+// The pmtiles source (one file, covering every grid layer) only actually
+// needs to change on a real country switch - tracked so updateMapData()
+// can tell that apart from a topic/indicator/layer change, which reuses it.
+let currentSourceUrl: string | null = null;
+// Which region ids currently carry a "value"/"displayValue" feature-state,
+// and under which source-layer - so a lookup update can clear exactly the
+// ids that dropped out of it (e.g. this indicator has no data for a region
+// the previous one did) without clobbering unrelated feature-state keys
+// like "selected", and without needing a full source rebuild to reset
+// everything. Reset whenever the source-layer itself changes, since ids
+// from a previous grid layer (adm1 vs h3) aren't meaningful there anyway.
+let lastFeatureStateLayerName: string | null = null;
+let lastAppliedLookupKeys = new Set<string>();
+
+function applyLookupFeatureStates(
+  sourceName: string,
+  layerName: string,
+  lookup: Record<string, number>,
+  displayLookup: Record<string, number>
+) {
+  if (!mapInstance) return;
+
+  if (lastFeatureStateLayerName !== layerName) {
+    lastAppliedLookupKeys = new Set();
+    lastFeatureStateLayerName = layerName;
+  }
+
+  const newKeys = new Set(Object.keys(lookup));
+
+  // Clear ids that had a value before but don't anymore - otherwise they'd
+  // keep showing the previous indicator's/topic's color and value forever,
+  // since a lookup update alone never removes stale feature-state.
+  lastAppliedLookupKeys.forEach((id) => {
+    if (!newKeys.has(id)) {
+      mapInstance!.removeFeatureState({ source: sourceName, sourceLayer: layerName, id }, 'value');
+      mapInstance!.removeFeatureState({ source: sourceName, sourceLayer: layerName, id }, 'displayValue');
+    }
+  });
+
+  Object.entries(lookup).forEach(([id, val]) => {
+    mapInstance!.setFeatureState(
+      { source: sourceName, sourceLayer: layerName, id },
+      { value: val, displayValue: displayLookup[id] ?? val }
+    );
+  });
+
+  lastAppliedLookupKeys = newKeys;
+}
+
 function initMap() {
   console.log('[MetricMap] initMap called, container:', !!mapContainer.value, 'pmtilesUrl:', !!props.pmtilesUrl, 'existing map:', !!mapInstance);
 
@@ -218,16 +267,32 @@ function updateMapData() {
     }
   });
 
-  // Remove and re-add source
-  if (mapInstance.getSource(sourceName)) {
-    mapInstance.removeSource(sourceName);
+  // The pmtiles source is one file covering every grid layer (adm0/adm1/h3),
+  // so only a genuine country switch actually needs a new source - a topic,
+  // indicator or grid-layer change reuses it. Removing and re-adding the
+  // source unconditionally (as this used to do on every one of those
+  // switches) forced MapLibre to re-fetch and re-parse every visible tile
+  // from scratch each time; because that re-parse is async, it could race
+  // with the feature-state update below - a topic switch's new lookup
+  // sometimes finished applying before the freshly re-added source had
+  // finished reloading its tiles, leaving some regions stuck on the default
+  // grey ("no data") until a later switch's timing happened to land the
+  // other way. Confirmed this matches the reported symptom (some adm1
+  // regions greyed out after a topic switch, fixed by switching away and
+  // back). Keeping the same source instance whenever the URL hasn't changed
+  // removes that race, on top of being cheaper.
+  const sourceUrl = `pmtiles://${props.pmtilesUrl}`;
+  if (currentSourceUrl !== sourceUrl || !mapInstance.getSource(sourceName)) {
+    if (mapInstance.getSource(sourceName)) {
+      mapInstance.removeSource(sourceName);
+    }
+    mapInstance.addSource(sourceName, {
+      type: "vector",
+      url: sourceUrl,
+      promoteId: "id"
+    });
+    currentSourceUrl = sourceUrl;
   }
-
-  mapInstance.addSource(sourceName, {
-    type: "vector",
-    url: `pmtiles://${props.pmtilesUrl}`,
-    promoteId: "id"
-  });
 
   // Fit bounds - only when they've actually changed (a genuinely new
   // country), not on every indicator/layer/topic switch within the same
@@ -285,17 +350,17 @@ function updateMapData() {
   // Set feature states. "value" drives the fill color (see
   // buildFillColorExpression) and may be a rescaled/discretized stand-in
   // for indicators like mapping-saturation - "displayValue" is always the
-  // real, un-rescaled value and is what the hover popup shows.
+  // real, un-rescaled value and is what the hover popup shows. Also clears
+  // stale entries from whichever indicator/topic was active before (see
+  // applyLookupFeatureStates) - necessary now that the source itself isn't
+  // unconditionally rebuilt above.
   const displayLookup = props.valueLookup ?? props.lookup;
-  Object.entries(props.lookup).forEach(([id, val]) => {
-    mapInstance!.setFeatureState(
-      { source: sourceName, sourceLayer: layerName, id },
-      { value: val, displayValue: displayLookup[id] ?? val }
-    );
-  });
+  applyLookupFeatureStates(sourceName, layerName, props.lookup, displayLookup);
 
-  // A fresh addSource/addLayer above wipes any previous feature-state, so
-  // re-apply whichever region the parent currently has selected.
+  // A genuinely new source, or a grid-layer switch (see
+  // applyLookupFeatureStates' per-layerName reset), starts with no
+  // feature-state at all, so re-apply whichever region the parent
+  // currently has selected.
   if (props.selectedGeomId) {
     mapInstance.setFeatureState(
       { source: sourceName, sourceLayer: layerName, id: props.selectedGeomId },
@@ -427,11 +492,16 @@ watch(
         return;
       }
 
-      // Zoom out first
+      // Zoom out first, then fly in to the new country's bounds. Kept as a
+      // deliberate flourish (a straight fitBounds reads as a jarring jump
+      // for a country switch), but shortened from the original 600+650+1200
+      // (~2.45s, fixed regardless of how fast the data itself loaded) since
+      // that fixed duration was adding to how slow a country switch felt
+      // even when the underlying data was already ready.
       mapInstance.easeTo({
         center: [0, 20],
         zoom: 1,
-        duration: 600,
+        duration: 350,
         easing: (t) => t * (2 - t)
       });
 
@@ -440,10 +510,10 @@ watch(
         if (mapInstance && props.bounds) {
           mapInstance.fitBounds(
             [[props.bounds.minLon, props.bounds.minLat], [props.bounds.maxLon, props.bounds.maxLat]],
-            { padding: 10, duration: 1200 }
+            { padding: 10, duration: 700 }
           );
         }
-      }, 650);
+      }, 380);
     }
   }
 );
@@ -465,16 +535,8 @@ watch(
       return;
     }
 
-    const sourceName = props.sourceName;
-    const layerName = props.layerName;
-
     const displayLookup = props.valueLookup ?? newLookup;
-    Object.entries(newLookup).forEach(([id, val]) => {
-      mapInstance!.setFeatureState(
-        { source: sourceName, sourceLayer: layerName, id },
-        { value: val, displayValue: displayLookup[id] ?? val }
-      );
-    });
+    applyLookupFeatureStates(props.sourceName, props.layerName, newLookup, displayLookup);
   },
     // lookup ref is replaced entirely on data load, so identity check is sufficient
 );
@@ -562,6 +624,9 @@ onUnmounted(() => {
     mapInstance = null;
     popupInstance = null;
     isMapInitialized = false;
+    currentSourceUrl = null;
+    lastFeatureStateLayerName = null;
+    lastAppliedLookupKeys = new Set();
   }
 });
 </script>
