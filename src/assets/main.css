@@ -81,20 +81,21 @@
   --accent-ink: #ffffff;
   --accent-soft: #DFF0FF;
   --brand: #CA2334;
-  /* Colorblind-safe qualitative triple (blue/amber/red-brown), replacing
-     the original red/yellow/green traffic-light scale everywhere it
-     appeared - that scale relies on a hue distinction (red vs. green) that
-     red-green color-blindness (the most common form) can't reliably make.
-     Applied consistently to the map fill (MetricMap.vue), the map legend
-     swatches, and these ring/hero-band tokens, which previously used a
-     slightly different red/yellow/green triple than the map did - now the
-     same three colors everywhere a good/warn/bad verdict is shown. */
-  --good: #208CC0;
-  --good-soft: rgba(32,140,192,0.12);
-  --warn: #F1AF3A;
-  --warn-soft: rgba(241,175,58,0.16);
-  --bad: #A82203;
-  --bad-soft: rgba(168,34,3,0.12);
+  /* Colorblind-safe qualitative triple (Okabe-Ito's bluish green/yellow/
+     vermillion), replacing the original red/yellow/green traffic-light
+     scale everywhere it appeared - that scale relies on a hue distinction
+     (red vs. green) that red-green color-blindness (the most common form)
+     can't reliably make. Applied consistently to the map fill
+     (MetricMap.vue), the map legend swatches, and these ring/hero-band
+     tokens, which previously used a slightly different red/yellow/green
+     triple than the map did - now the same three colors everywhere a
+     good/warn/bad verdict is shown. */
+  --good: #009E73;
+  --good-soft: rgba(0,158,115,0.12);
+  --warn: #F0E442;
+  --warn-soft: rgba(240,228,66,0.16);
+  --bad: #D55E00;
+  --bad-soft: rgba(213,94,0,0.12);
   --disabled: #C7CFCE;
   --shadow: 0 1px 3px 0 rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.06);
   --radius: 8px;

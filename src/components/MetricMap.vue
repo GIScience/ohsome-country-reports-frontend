@@ -56,6 +56,12 @@ const props = defineProps<{
   // drawn with the "selected" outline - the parent owns this (it's what
   // decides which polygon's plot to show), this component only visualizes it.
   selectedGeomId?: string | null;
+  // Credit for whoever the boundary polygons in pmtilesUrl actually come
+  // from (geoBoundaries for most countries, Germany's own BKG - see
+  // getCountryLayers() in helpers.ts) - the parent decides which, since it
+  // already knows the selected country; this component just displays
+  // whatever it's given via the map's attribution control.
+  boundariesAttribution?: string;
 }>();
 
 // For Split View's "mirror the other map's zoom/pan" feature: emits only on
@@ -166,10 +172,27 @@ function initMap() {
   }
 
   // Create map instance
+  //
+  // The basemap style (@versatiles/style's colorful(), see BASEMAP_STYLE
+  // above) already carries its own OpenStreetMap attribution on its vector
+  // source, so simply leaving the default attribution control enabled
+  // (rather than the attributionControl: false this used to set) is enough
+  // to surface it - required by OSM's license (ODbL) wherever OSM-derived
+  // data is shown, not just a nicety. The boundaries source added in
+  // updateMapData() below carries its own separate `attribution` (passed in
+  // via the boundariesAttribution prop), which the same control picks up
+  // and merges in automatically. customAttribution credits the library
+  // itself - not a license requirement (MapLibre GL JS is BSD-3-Clause, no
+  // on-screen credit obligation), just goodwill toward the project - and is
+  // prepended before every source-derived attribution the control collects,
+  // so it reads "MapLibre | © OpenStreetMap contributors [| ...]".
   mapInstance = new maplibregl.Map({
     container: mapContainer.value,
     style: BASEMAP_STYLE,
-    attributionControl: false
+    attributionControl: {
+      compact: true,
+      customAttribution: '<a href="https://maplibre.org/" target="_blank" rel="noopener">MapLibre</a>'
+    }
   });
 
   console.log('[MetricMap] Map instance created');
@@ -222,9 +245,9 @@ function buildFillColorExpression(): any {
       // of a red/yellow/green traffic light - kept in sync with those
       // tokens' hex values by hand, since MapLibre paint expressions can't
       // read CSS custom properties.
-      0, "#A82203",
-      0.25, "#F1AF3A",
-      0.75, "#208CC0"
+      0, "#D55E00",
+      0.25, "#F0E442",
+      0.75, "#009E73"
     ];
   }
 
@@ -293,7 +316,8 @@ function updateMapData() {
     mapInstance.addSource(sourceName, {
       type: "vector",
       url: sourceUrl,
-      promoteId: "id"
+      promoteId: "id",
+      attribution: props.boundariesAttribution
     });
     currentSourceUrl = sourceUrl;
   }

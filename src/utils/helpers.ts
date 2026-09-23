@@ -106,7 +106,7 @@ export function getTagGroupingKey(topic: string): string {
 }
 
 /**
- * Per-country layer names. Most countries' boundaries come from geoBoundaries
+ * Per-country layer names. Most countries' boundaries come from OpenStreetMap
  * (adm0/adm1/h3); Germany's come from BKG instead, with its own level names.
  * "countryLevel" is the single whole-country polygon layer (treemap, tag
  * coverage, gauge figures, and indicator descriptions all come from here,

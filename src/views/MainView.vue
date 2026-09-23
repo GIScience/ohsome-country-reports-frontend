@@ -132,6 +132,19 @@ const bounds = ref<PMTilesBounds | null>(null);
 const currentLayers = computed(() => getCountryLayers(selectedCountry.value));
 const selectedCountryLabel = computed(() => countries.value.find(c => c.value === selectedCountry.value)?.label || 'country');
 
+// Extra credit for the boundary polygons themselves, shown by MetricMap's
+// map attribution control alongside the basemap's own OpenStreetMap credit.
+// Only Germany needs a separate line - its boundaries come from BKG (see
+// getCountryLayers() in helpers.ts, and the country override table it reads
+// from), not OpenStreetMap like every other country's do. Every other
+// country's boundaries are already covered by the basemap's own "©
+// OpenStreetMap contributors" credit, so adding a second, identical one
+// here would just be redundant - undefined means MetricMap shows only that
+// one credit, with nothing extra merged in.
+const boundariesAttribution = computed(() => selectedCountry.value === 'DEU'
+  ? 'Boundaries: © <a href="https://gdz.bkg.bund.de/" target="_blank" rel="noopener">GeoBasis-DE / BKG</a>'
+  : undefined);
+
 // null = not checked yet for this country (show every layer optimistically,
 // same as before this existed); once loadCountry resolves it, only layers
 // whose parquet file actually exists stay selectable - some grid layers
@@ -1229,18 +1242,19 @@ onUnmounted(() => {
                 :showAsPercent="showsForcedPercent(mainPanel)"
                 :fixedColorRange="showsForcedPercent(mainPanel) ? [0, 1] : undefined"
                 :selectedGeomId="mainPanel.selectedGeomId"
+                :boundariesAttribution="boundariesAttribution"
                 @regionClick="handleRegionClick(0, $event)"
               />
               <template v-if="mainPanel.activeIndicatorKey !== 'tag-distribution'">
                 <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount && isQualityClassColored(getActiveCard(mainPanel)?.indicator || '')">
-                  <div><i style="background:#208CC0;"></i>High</div>
-                  <div><i style="background:#F1AF3A;"></i>Medium</div>
-                  <div><i style="background:#A82203;"></i>Low</div>
+                  <div><i style="background:#009E73;"></i>High</div>
+                  <div><i style="background:#F0E442;"></i>Medium</div>
+                  <div><i style="background:#D55E00;"></i>Low</div>
                 </div>
                 <div class="map-legend" v-else-if="!getActiveCard(mainPanel)?.isCount">
-                  <div><i style="background:#208CC0;"></i>75&ndash;100%</div>
-                  <div><i style="background:#F1AF3A;"></i>25&ndash;75%</div>
-                  <div><i style="background:#A82203;"></i>0&ndash;25%</div>
+                  <div><i style="background:#009E73;"></i>75&ndash;100%</div>
+                  <div><i style="background:#F0E442;"></i>25&ndash;75%</div>
+                  <div><i style="background:#D55E00;"></i>0&ndash;25%</div>
                 </div>
                 <div class="map-legend map-legend--gradient" v-else>
                   <span class="legend-cap">{{ getLegendCapText(mainPanel, 'max') }}</span>

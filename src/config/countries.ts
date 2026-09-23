@@ -16,7 +16,10 @@
  */
 export const CANDIDATE_COUNTRIES: string[] = [
   "DEU",
+  "GHA",
+  "ITA",
   "KEN",
   "NPL",
   "TZA",
+  "VEN",
 ];
