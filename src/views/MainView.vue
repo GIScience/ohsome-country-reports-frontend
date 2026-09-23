@@ -13,6 +13,7 @@ import {
   loadRegionIndicatorValues,
   getPMTilesBounds,
   loadTagDistribution,
+  loadFeatureCountLookup,
   loadIndicatorFigure,
   loadLatestTimestamp,
   checkParquetExists,
@@ -372,6 +373,26 @@ function isActiveIndicatorCountryLevelUnavailable(panel: ViewPanel): boolean {
 // rather than a bare "0.95".
 function showsForcedPercent(panel: ViewPanel): boolean {
   return FORCE_NON_QUALITY_INDICATORS.has(getActiveCard(panel)?.indicator || '');
+}
+
+// What the map's color scale actually represents for whichever indicator is
+// currently active - shown above the legend swatches/gradient so "green"
+// doesn't have to be guessed at. Quality-scored indicators (whether shown as
+// Low/Medium/High bands or a raw percentage) all read as one scale, since
+// they look identical on the map; the count-style indicators each get their
+// own specific label instead of a generic "Count", since what's being
+// counted differs by indicator.
+// Two-word titles are stacked (a literal newline, rendered via the
+// map-legend-title CSS's white-space: pre-line) rather than run side by
+// side, to keep the legend box narrow - it's an absolutely-positioned
+// overlay on top of the map, so its own width directly eats into map space.
+function getMapLegendTitle(panel: ViewPanel): string {
+  const card = getActiveCard(panel);
+  if (!card) return '';
+  if (card.indicator === TAG_DISTRIBUTION_KEY) return 'Features\nMapped';
+  if (card.indicator === 'user-activity') return 'Users';
+  if (FORCE_NON_QUALITY_INDICATORS.has(card.indicator)) return 'Features\nMatched';
+  return card.isCount ? 'Count' : 'Quality Class';
 }
 
 function getLegendCapText(panel: ViewPanel, which: 'min' | 'max'): string {
@@ -762,11 +783,20 @@ async function loadActiveMapLookup(panelIdx: number, topicName: string) {
   const card = panel && getActiveCard(panel);
   if (!panel || !card || !selectedCountry.value) return;
 
-  // Tag distribution has no per-region value to color the map with - an
-  // empty lookup makes every feature fall back to MetricMap's default grey
-  // (see buildFillColorExpression), same as "not loaded yet".
+  // Tag distribution colors the map by each region's own feature count
+  // instead of a quality value - the same "count" measure the treemap's
+  // own totals are built from (see loadPanelTreemap), just broken out per
+  // boundary via loadFeatureCountLookup() instead of summed to one number.
   if (card.indicator === TAG_DISTRIBUTION_KEY) {
-    panel.mapLookup = {};
+    const groupingKey = getTagGroupingKey(topicName);
+    if (!groupingKey) {
+      panel.mapLookup = {};
+      return;
+    }
+    const urls = buildUrls(selectedCountry.value, panel.mapLayer);
+    const lookup = await loadFeatureCountLookup(urls.tagDistributionUrl, topicName, groupingKey);
+    panel.mapValueLookup = lookup;
+    panel.mapLookup = lookup;
     return;
   }
 
@@ -1245,23 +1275,24 @@ onUnmounted(() => {
                 :boundariesAttribution="boundariesAttribution"
                 @regionClick="handleRegionClick(0, $event)"
               />
-              <template v-if="mainPanel.activeIndicatorKey !== 'tag-distribution'">
-                <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount && isQualityClassColored(getActiveCard(mainPanel)?.indicator || '')">
-                  <div><i style="background:#009E73;"></i>High</div>
-                  <div><i style="background:#F0E442;"></i>Medium</div>
-                  <div><i style="background:#D55E00;"></i>Low</div>
-                </div>
-                <div class="map-legend" v-else-if="!getActiveCard(mainPanel)?.isCount">
-                  <div><i style="background:#009E73;"></i>75&ndash;100%</div>
-                  <div><i style="background:#F0E442;"></i>25&ndash;75%</div>
-                  <div><i style="background:#D55E00;"></i>0&ndash;25%</div>
-                </div>
-                <div class="map-legend map-legend--gradient" v-else>
-                  <span class="legend-cap">{{ getLegendCapText(mainPanel, 'max') }}</span>
-                  <div class="legend-gradient-bar"></div>
-                  <span class="legend-cap">{{ getLegendCapText(mainPanel, 'min') }}</span>
-                </div>
-              </template>
+              <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount && isQualityClassColored(getActiveCard(mainPanel)?.indicator || '')">
+                <span class="map-legend-title">{{ getMapLegendTitle(mainPanel) }}</span>
+                <div><i style="background:#009E73;"></i>High</div>
+                <div><i style="background:#F0E442;"></i>Medium</div>
+                <div><i style="background:#D55E00;"></i>Low</div>
+              </div>
+              <div class="map-legend" v-else-if="!getActiveCard(mainPanel)?.isCount">
+                <span class="map-legend-title">{{ getMapLegendTitle(mainPanel) }}</span>
+                <div><i style="background:#009E73;"></i>75&ndash;100%</div>
+                <div><i style="background:#F0E442;"></i>25&ndash;75%</div>
+                <div><i style="background:#D55E00;"></i>0&ndash;25%</div>
+              </div>
+              <div class="map-legend map-legend--gradient" v-else-if="getActiveCard(mainPanel)">
+                <span class="map-legend-title">{{ getMapLegendTitle(mainPanel) }}</span>
+                <span class="legend-cap">{{ getLegendCapText(mainPanel, 'max') }}</span>
+                <div class="legend-gradient-bar"></div>
+                <span class="legend-cap">{{ getLegendCapText(mainPanel, 'min') }}</span>
+              </div>
             </div>
           </section>
 
@@ -1455,11 +1486,19 @@ onUnmounted(() => {
 }
 .map-legend div { display: flex; align-items: center; gap: 0.4rem; }
 .map-legend i { width: 0.7rem; height: 0.7rem; display: inline-block; flex: none; border-radius: 2px; }
+.map-legend-title {
+  font-weight: 700; color: var(--ink); text-transform: uppercase;
+  letter-spacing: 0.02em; font-size: 0.66rem; margin-bottom: 0.05rem;
+  /* Renders a literal \n from getMapLegendTitle() as a line break, so a
+     two-word title stacks instead of widening the legend box. */
+  white-space: pre-line; line-height: 1.15;
+}
 /* Count indicators (e.g. user-activity) are colored on a continuous
    min-to-max gradient, not fixed quality bands - a row of static swatches
    would be misleading there, so this shows the actual scale as a bar with
    the real min/max values from what's currently loaded on the map. */
 .map-legend--gradient { align-items: center; gap: 0.3rem; }
+.map-legend--gradient .map-legend-title { text-align: center; }
 .legend-gradient-bar {
   width: 14px; height: 84px;
   background: linear-gradient(180deg, #154360, #EAF2F8);

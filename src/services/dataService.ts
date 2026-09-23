@@ -565,6 +565,58 @@ export async function loadTagDistribution(
 }
 
 /**
+ * Every region's own feature count for one (topic, groupingKey) pair, read
+ * from the same tag-distribution parquet loadTagDistribution() uses - the
+ * "count" measure's sum_value, one row per region, rather than scoped down
+ * to a single region or aggregated to the whole layer. Used to color the
+ * map when Tag Distribution is the active indicator (there's no dedicated
+ * per-topic "feature count" indicator otherwise): the same count that feeds
+ * the treemap's totals, just broken out per boundary instead of summed.
+ */
+export async function loadFeatureCountLookup(
+  parquetUrl: string,
+  topic: string,
+  groupingKey: string
+): Promise<Record<string, number>> {
+  const { db, conn } = await initDuckDB();
+
+  try {
+    const tableName = await registerParquetFile(parquetUrl, db);
+
+    const result = await runQuery(conn, `
+      SELECT geomID, sum_value
+      FROM read_parquet('${tableName}')
+      WHERE topic = '${topic}' AND grouping_key = '${groupingKey}' AND measure = 'count'
+    `);
+
+    const resultArray = toArray(result);
+    const lookup: Record<string, number> = {};
+
+    resultArray.forEach((r: any) => {
+      if (isNoDataValue(r.sum_value)) return;
+      const value = Number(r.sum_value);
+      if (isNaN(value)) return;
+
+      const geomID = String(r.geomID);
+      lookup[geomID] = value;
+
+      // Same suffix-aliasing convention as loadIndicatorLookups(), for
+      // geomIDs like "DEU_12345" that also need to match on their bare
+      // regional suffix.
+      if (geomID.includes("_")) {
+        const suffix = geomID.split("_").pop();
+        if (suffix) lookup[suffix] = value;
+      }
+    });
+
+    return lookup;
+  } catch (e) {
+    console.error("Failed to load feature count lookup:", e);
+    return {};
+  }
+}
+
+/**
  * Reads one indicator's pre-rendered gauge-chart Plotly figure (the "figure"
  * column) for a given topic from the country-level indicator parquet.
  */
