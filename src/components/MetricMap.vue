@@ -218,9 +218,13 @@ function buildFillColorExpression(): any {
       "step",
       ["coalesce", ["feature-state", "value"], -1],
       "#bab8b8",
-      0, "#F44336",
-      0.25, "#FFEB3B",
-      0.75, "#4CAF50"
+      // Colorblind-safe triple (see main.css --good/--warn/--bad) instead
+      // of a red/yellow/green traffic light - kept in sync with those
+      // tokens' hex values by hand, since MapLibre paint expressions can't
+      // read CSS custom properties.
+      0, "#A82203",
+      0.25, "#F1AF3A",
+      0.75, "#208CC0"
     ];
   }
 

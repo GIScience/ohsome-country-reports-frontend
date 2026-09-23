@@ -1233,14 +1233,14 @@ onUnmounted(() => {
               />
               <template v-if="mainPanel.activeIndicatorKey !== 'tag-distribution'">
                 <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount && isQualityClassColored(getActiveCard(mainPanel)?.indicator || '')">
-                  <div><i style="background:#F44336;"></i>Low</div>
-                  <div><i style="background:#FFEB3B;"></i>Medium</div>
-                  <div><i style="background:#4CAF50;"></i>High</div>
+                  <div><i style="background:#208CC0;"></i>High</div>
+                  <div><i style="background:#F1AF3A;"></i>Medium</div>
+                  <div><i style="background:#A82203;"></i>Low</div>
                 </div>
                 <div class="map-legend" v-else-if="!getActiveCard(mainPanel)?.isCount">
-                  <div><i style="background:#F44336;"></i>0&ndash;25%</div>
-                  <div><i style="background:#FFEB3B;"></i>25&ndash;75%</div>
-                  <div><i style="background:#4CAF50;"></i>75&ndash;100%</div>
+                  <div><i style="background:#208CC0;"></i>75&ndash;100%</div>
+                  <div><i style="background:#F1AF3A;"></i>25&ndash;75%</div>
+                  <div><i style="background:#A82203;"></i>0&ndash;25%</div>
                 </div>
                 <div class="map-legend map-legend--gradient" v-else>
                   <span class="legend-cap">{{ getLegendCapText(mainPanel, 'max') }}</span>
