@@ -530,6 +530,20 @@ watch(selectedCountry, async (newCountry) => {
   await loadCountry(newCountry, true);
 });
 
+// The parquet's own timestamp (when the pipeline actually computed this
+// data), not the object storage's Last-Modified header (which only
+// reflects when the file was last uploaded/copied). Scoped to a specific
+// layer's own tag-distribution file, not hardcoded to the country level -
+// different layers can be processed at different times, so "current as of"
+// should reflect whichever layer is actually selected on screen.
+async function loadDataDateForLayer(code: string, layer: string): Promise<string> {
+  const url = buildUrls(code, layer).tagDistributionUrl;
+  const latestTimestamp = await loadLatestTimestamp(url);
+  return latestTimestamp
+    ? new Date(latestTimestamp).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : '';
+}
+
 // Bumped on every loadCountry() call so an older, still-in-flight call can
 // tell it's been superseded (e.g. the user picked a second country before
 // the first one finished loading) and stop touching shared state instead of
@@ -549,15 +563,17 @@ async function loadCountry(code: string, updateTopics: boolean) {
   parquetUrl.value = urls.parquetUrl;
 
   try {
-    // The data's own latest timestamp, the pmtiles bounds, and which grid
-    // layers actually have data are all independent network calls - run
-    // them together instead of one after the other.
+    // The pmtiles bounds and which grid layers actually have data are
+    // independent network calls - run them together instead of one after
+    // the other. The "data current as of" timestamp used to be fetched
+    // here too, hardcoded to the country-level layer - it's fetched below
+    // instead, once defaultLayer is known, so it reflects whichever layer
+    // is actually selected rather than always adm0/vg2500_sta.
     const layerCandidates = [...new Set(
       [layers.countryLevel, layers.stateLevel, layers.detailLevel, layers.h3Level].filter(Boolean) as string[]
     )];
 
-    const [latestTimestamp, pmtilesBounds, layerChecks] = await Promise.all([
-      loadLatestTimestamp(urls.tagDistributionUrl),
+    const [pmtilesBounds, layerChecks] = await Promise.all([
       getPMTilesBounds(urls.pmtilesUrl),
       Promise.all(layerCandidates.map(async (layer) => {
         const exists = await checkParquetExists(buildUrls(code, layer).parquetUrl);
@@ -579,12 +595,8 @@ async function loadCountry(code: string, updateTopics: boolean) {
       defaultLayer = preferredOrder.find(l => newAvailableLayers.has(l)) || layers.h3Level;
     }
 
-    // The parquet's own timestamp (when the pipeline actually computed this
-    // country's data), not the object storage's Last-Modified header (which
-    // only reflects when the file was last uploaded/copied).
-    dataDate.value = latestTimestamp
-      ? new Date(latestTimestamp).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-      : '';
+    dataDate.value = await loadDataDateForLayer(code, defaultLayer);
+    if (!isCurrent()) return;
 
     bounds.value = pmtilesBounds;
     if (!bounds.value) {
@@ -937,12 +949,23 @@ async function handleMapLayerChange(panelIdx: number, layer: string) {
   // before this feature, but now they can be showing a just-cleared
   // region's data too, so they need refreshing here as well.
   panel.selectedGeomId = null;
-  await Promise.all([
+  const dataDatePromise = selectedCountry.value
+    ? loadDataDateForLayer(selectedCountry.value, layer)
+    : Promise.resolve('');
+  const [newDataDate] = await Promise.all([
+    dataDatePromise,
     loadActiveMapLookup(panelIdx, panel.selectedTopic),
     loadActiveIndicatorPlot(panelIdx),
     loadIndicatorCards(panelIdx, panel.selectedTopic),
     loadPanelTreemap(panelIdx)
   ]);
+  // Only apply if this is still the active layer - a fast second layer
+  // click before this one's timestamp fetch resolves shouldn't let the
+  // stale one win (same reasoning as loadCountry's generation guard,
+  // scoped down to this one field instead of a full guard object).
+  if (panel.mapLayer === layer) {
+    dataDate.value = newDataDate;
+  }
 }
 
 // Clicking a polygon switches every data-driven box (hero band, indicator
