@@ -27,7 +27,8 @@ import {
   buildUrls,
   getTagGroupingKey,
   getCountryLayers,
-  setCurrentSchoolSubTopic
+  setCurrentSchoolSubTopic,
+  formatDescriptionHtml
 } from '../utils/helpers';
 
 import Plotly from 'plotly.js-dist-min';
@@ -1401,7 +1402,8 @@ onUnmounted(() => {
               </div>
               <div class="plotpanel-desc" v-if="getActiveCard(mainPanel)?.description">
                 <span class="plotpanel-desc-label">About this indicator</span>
-                <p>{{ getActiveCard(mainPanel)?.description }}</p>
+                <!-- formatDescriptionHtml escapes everything except known markup (units, links). -->
+                <p v-html="formatDescriptionHtml(getActiveCard(mainPanel)?.description || '')"></p>
               </div>
             </div>
           </section>
@@ -1597,6 +1599,15 @@ onUnmounted(() => {
 .plotpanel-desc p {
   margin: 0; font-size: 0.95rem; line-height: 1.5; color: var(--ink-soft);
 }
+/* Links come in via v-html (formatDescriptionHtml), which scoped styles
+   don't reach without :deep(). */
+.plotpanel-desc p :deep(a) {
+  color: var(--accent); font-weight: 600; text-decoration: underline;
+  text-decoration-thickness: 1px; text-underline-offset: 2px;
+  transition: text-decoration-thickness 0.15s;
+}
+.plotpanel-desc p :deep(a)::after { content: " ↗"; font-size: 0.8em; }
+.plotpanel-desc p :deep(a:hover) { text-decoration-thickness: 2px; }
 @media (max-width: 720px) {
   .plotpanel-layout { flex-direction: column; }
   .plotpanel-desc { border-left: none; border-top: 1px solid var(--line); padding: 0.75rem 0 0; max-height: none; }

@@ -166,3 +166,34 @@ export function buildUrls(code: string, layer: string): BuildUrlsResult {
     tagDistributionUrl: `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${code}/${code}_${layer}_tag_distribution.parquet`
   };
 }
+
+/**
+ * Turns an indicator description from the pipeline into HTML that's safe for
+ * v-html. The descriptions carry a little markup of their own (units like
+ * "km<sup>2</sup>", links like "<a href=...>F1-Score</a>") that plain {{ }}
+ * interpolation would show as literal tags. Everything is escaped first, then
+ * only that known markup is let back in - anything else stays escaped text
+ * and is logged, so new markup from the backend shows up in the console
+ * instead of silently rendering as raw tags.
+ */
+export function formatDescriptionHtml(text: string): string {
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  html = html
+    .replace(/&lt;(sup|sub)&gt;([^&]{1,10})&lt;\/\1&gt;/g, '<$1>$2</$1>')
+    .replace(/&lt;br\s*\/?&gt;/g, '<br>')
+    .replace(
+      /&lt;a href=&quot;(https?:\/\/[^&\s]+)&quot;&gt;(.*?)&lt;\/a&gt;/g,
+      '<a href="$1" target="_blank" rel="noopener noreferrer">$2</a>'
+    );
+
+  const leftover = html.match(/&lt;\/?[a-z][\s\S]*?&gt;/gi);
+  if (leftover) {
+    console.warn('[formatDescriptionHtml] Unhandled markup in description:', leftover, text);
+  }
+  return html;
+}
