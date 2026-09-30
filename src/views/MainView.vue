@@ -285,6 +285,12 @@ interface ViewPanel {
   tile1Label: string;
   schoolSwitchVisible: boolean;
   schoolSubTopic: string;
+  // Which tag-distribution measure ("area"/"length"/"count") the treemap
+  // shows, and which ones this topic actually has a treemap for. The choice
+  // is kept across topic switches and falls back to the first available
+  // measure when the new topic doesn't have it.
+  treemapMeasure: string | null;
+  treemapMeasures: string[];
   // Which polygon on the map is click-selected, if any - drives the plot
   // below to that one region instead of the whole-country aggregate.
   // Belongs to the current (topic, mapLayer) id-space, so it gets cleared
@@ -303,6 +309,7 @@ function createPanel(id: string, topic: string, layer: string): ViewPanel {
     mapLookup: {}, mapValueLookup: {}, activePlotAvailable: true,
     featureCount: '', totalLength: '', tile1Label: '',
     schoolSwitchVisible: false, schoolSubTopic: 'operator',
+    treemapMeasure: null, treemapMeasures: [],
     selectedGeomId: null, selectedRegionName: null
   };
 }
@@ -1021,6 +1028,30 @@ async function loadTrueFeatureCount(topicName: string): Promise<number | null> {
   }
 }
 
+const TREEMAP_MEASURE_ORDER = ['area', 'length', 'count'];
+function measureRank(measure: string): number {
+  const i = TREEMAP_MEASURE_ORDER.indexOf(measure);
+  return i === -1 ? TREEMAP_MEASURE_ORDER.length : i;
+}
+
+function getMeasureLabel(measure: string): string {
+  return measure.charAt(0).toUpperCase() + measure.slice(1);
+}
+
+// The user's chosen measure if this topic has it, else the default one.
+function getShownTreemapMeasure(panel: ViewPanel): string | undefined {
+  return panel.treemapMeasure && panel.treemapMeasures.includes(panel.treemapMeasure)
+    ? panel.treemapMeasure
+    : panel.treemapMeasures[0];
+}
+
+function handleTreemapMeasureSwitch(panelIdx: number, measure: string) {
+  const panel = panels.value[panelIdx];
+  if (!panel || panel.treemapMeasure === measure) return;
+  panel.treemapMeasure = measure;
+  loadPanelTreemap(panelIdx);
+}
+
 async function loadPanelTreemap(panelIdx: number) {
   const panel = panels.value[panelIdx];
   if (!panel || !selectedCountry.value) return;
@@ -1046,10 +1077,16 @@ async function loadPanelTreemap(panelIdx: number) {
       geomId ? Promise.resolve(null) : loadTrueFeatureCount(topicName)
     ]);
 
-    const mainMeasure = byMeasure['area'] || byMeasure['length'] || byMeasure['count'];
-    if (!mainMeasure?.treemap) return;
+    // Default order is area, then length, then count; any other measure the
+    // pipeline adds later just goes after those.
+    const available = Object.keys(byMeasure)
+      .filter(m => byMeasure[m]?.treemap)
+      .sort((a, b) => measureRank(a) - measureRank(b));
+    panel.treemapMeasures = available;
+    const measure = getShownTreemapMeasure(panel);
+    if (!measure) return;
 
-    const fig = mainMeasure.treemap;
+    const fig = byMeasure[measure]!.treemap;
     fig.layout = fig.layout || {};
     fig.layout.margin = { t: 40, r: 10, l: 10, b: 10 };
     fig.layout.paper_bgcolor = 'rgba(0,0,0,0)';
@@ -1347,6 +1384,11 @@ onUnmounted(() => {
                     <button :class="{ active: mainPanel.schoolSubTopic === 'isced' }" @click="handlePanelSchoolSwitch(0, 'isced')">
                       {{ mainPanel.selectedTopic?.toLowerCase().startsWith('hospital') || mainPanel.selectedTopic?.toLowerCase().startsWith('healthcare') ? 'healthcare:speciality' : 'isced:level' }}
                     </button>
+                  </div>
+                  <div class="grouping-toggle" v-if="mainPanel.treemapMeasures.length > 1">
+                    <button v-for="m in mainPanel.treemapMeasures" :key="m"
+                      :class="{ active: m === getShownTreemapMeasure(mainPanel) }"
+                      @click="handleTreemapMeasureSwitch(0, m)">{{ getMeasureLabel(m) }}</button>
                   </div>
                   <div class="plot-container" :id="'tag-treemap-' + mainPanel.id"></div>
                 </div>
