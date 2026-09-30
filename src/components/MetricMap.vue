@@ -152,6 +152,13 @@ function applyLookupFeatureStates(
   lastAppliedLookupKeys = newKeys;
 }
 
+// With a region selected, every region's base fill fades back - including
+// the selected one's, since a lifted copy of it is drawn on top (see the
+// "-selected-fill" layer). Swapped via setPaintProperty on selection change.
+function fillOpacityExpression(hasSelection: boolean): number {
+  return hasSelection ? 0.2 : 0.6;
+}
+
 function initMap() {
   console.log('[MetricMap] initMap called, container:', !!mapContainer.value, 'pmtilesUrl:', !!props.pmtilesUrl, 'existing map:', !!mapInstance);
 
@@ -352,28 +359,70 @@ function updateMapData() {
     "source-layer": layerName,
     paint: {
       "fill-color": buildFillColorExpression(),
-      "fill-opacity": 0.6,
+      "fill-opacity": fillOpacityExpression(!!props.selectedGeomId),
+      "fill-opacity-transition": { duration: 250 },
       "fill-outline-color": "#555"
     }
   });
 
-  // A thin, high-contrast outline for whichever region is currently
-  // click-selected. Opacity (not the layer's presence) is driven by the
-  // "selected" feature-state, since MapLibre filter expressions can't read
-  // feature-state - only paint expressions can.
+  // The click-selected region reads as "lifted" above the map, like a
+  // hovered card: its base polygon fades back with every other region (see
+  // fillOpacityExpression), and a solid copy of it is drawn a few pixels up
+  // (fill-translate), with a soft shadow shifted down underneath and a crisp
+  // white edge on top. Translate isn't data-driven, but these layers only
+  // ever show the selected feature anyway - their opacity (not their
+  // presence) is driven by the "selected" feature-state, since MapLibre
+  // filter expressions can't read feature-state, only paint expressions can.
+  // The lift scales with zoom: zoomed out, regions are small and dense and
+  // a big offset/shadow reads as a dark smudge rather than depth.
+  const isSelected = ["boolean", ["feature-state", "selected"], false];
+  const lift = ["interpolate", ["linear"], ["zoom"], 5, ["literal", [0, -1]], 10, ["literal", [0, -3]]];
+  const drop = ["interpolate", ["linear"], ["zoom"], 5, ["literal", [0, 1]], 10, ["literal", [0, 4]]];
+  const glowLayerId = `${layerId}-selected-glow`;
+  const liftedLayerId = `${layerId}-selected-fill`;
   const selectedLayerId = `${layerId}-selected`;
-  if (mapInstance.getLayer(selectedLayerId)) {
-    mapInstance.removeLayer(selectedLayerId);
+  for (const id of [glowLayerId, liftedLayerId, selectedLayerId]) {
+    if (mapInstance.getLayer(id)) mapInstance.removeLayer(id);
   }
+  mapInstance.addLayer({
+    id: glowLayerId,
+    type: "line",
+    source: sourceName,
+    "source-layer": layerName,
+    layout: { "line-join": "round" },
+    paint: {
+      "line-color": "#1a1a1a",
+      "line-width": ["interpolate", ["linear"], ["zoom"], 7, 4, 10, 10] as any,
+      "line-blur": ["interpolate", ["linear"], ["zoom"], 7, 3, 10, 8] as any,
+      "line-translate": drop as any,
+      "line-opacity": ["interpolate", ["linear"], ["zoom"],
+        7, 0,
+        10, ["case", isSelected, 0.3, 0]
+      ] as any
+    }
+  });
+  mapInstance.addLayer({
+    id: liftedLayerId,
+    type: "fill",
+    source: sourceName,
+    "source-layer": layerName,
+    paint: {
+      "fill-color": buildFillColorExpression(),
+      "fill-translate": lift as any,
+      "fill-opacity": ["case", isSelected, 0.9, 0] as any
+    }
+  });
   mapInstance.addLayer({
     id: selectedLayerId,
     type: "line",
     source: sourceName,
     "source-layer": layerName,
+    layout: { "line-join": "round" },
     paint: {
-      "line-color": "#0B7285",
-      "line-width": 3,
-      "line-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, 0]
+      "line-color": "#ffffff",
+      "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1.5, 10, 2.5] as any,
+      "line-translate": lift as any,
+      "line-opacity": ["case", isSelected, 1, 0] as any
     }
   });
 
@@ -620,6 +669,9 @@ watch(
     }
     if (newId) {
       mapInstance.setFeatureState({ source: sourceName, sourceLayer: layerName, id: newId }, { selected: true });
+    }
+    if (currentLayerId && mapInstance.getLayer(currentLayerId)) {
+      mapInstance.setPaintProperty(currentLayerId, "fill-opacity", fillOpacityExpression(!!newId));
     }
   }
 );
