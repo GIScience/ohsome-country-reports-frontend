@@ -1191,7 +1191,7 @@ onUnmounted(() => {
         <aside class="sidebar">
           <div class="sidebar-brand">
             <img :src="ohsomeLogo" alt="ohsome quality api" class="sidebar-logo" />
-            <strong>ohsome Country Quality Report</strong>
+            <strong>Country Reports</strong>
           </div>
 
           <div class="sidebar-section">
@@ -1443,7 +1443,7 @@ onUnmounted(() => {
 }
 .sidebar-brand img { height: 2.2rem; width: auto; display: block; flex: none; }
 .sidebar-brand strong {
-  font-family: var(--font-display); font-weight: 700; font-size: 0.98rem;
+  font-family: var(--font-display); font-weight: 700; font-size: 1.2rem;
   letter-spacing: 0.01em; color: var(--ink); line-height: 1.2;
 }
 
