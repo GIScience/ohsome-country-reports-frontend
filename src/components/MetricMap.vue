@@ -75,8 +75,9 @@ const emit = defineEmits<{
   // Fired on every click: the clicked region's id, or null when the click
   // missed every polygon (empty map area) or landed back on the already-
   // selected one - both read as "go back to the whole-country view" to the
-  // parent.
-  (e: 'regionClick', geomId: string | null): void;
+  // parent. regionName is the clicked feature's name (see getRegionName), or
+  // null if it has none.
+  (e: 'regionClick', geomId: string | null, regionName: string | null): void;
 }>();
 
 let resizeHandler: (() => void) | null = null;
@@ -160,7 +161,8 @@ function initMap() {
     if (!mapInstance || !currentLayerId) return;
     const hits = mapInstance.queryRenderedFeatures(e.point, { layers: [currentLayerId] });
     const clickedId = hits.length > 0 && hits[0].id != null ? String(hits[0].id) : null;
-    emit('regionClick', clickedId !== null && clickedId === props.selectedGeomId ? null : clickedId);
+    const deselect = clickedId === null || clickedId === props.selectedGeomId;
+    emit('regionClick', deselect ? null : clickedId, deselect ? null : getRegionName(hits[0]));
   };
 
   // Register PMTiles protocol
@@ -400,6 +402,19 @@ function updateMapData() {
   setupHoverHandlers(sourceName, layerName, indicatorName);
 }
 
+// Region name straight from the pmtiles feature properties - prefer the
+// English name, fall back to the local one.
+function getRegionName(feature: any): string | null {
+  const name = feature?.properties?.name_en || feature?.properties?.name;
+  return name ? String(name) : null;
+}
+
+// Names come from the boundary data, not from us - escape before they go
+// into the popup's innerHTML.
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
 function setupHoverHandlers(sourceName: string, layerName: string, indicatorName: string) {
   if (!mapInstance || !popupInstance) return;
 
@@ -432,8 +447,11 @@ function setupHoverHandlers(sourceName: string, layerName: string, indicatorName
       const displayValue = props.isCountIndicator && !props.showAsPercent
         ? Number(val).toLocaleString('en-US')
         : (Number(val) * 100).toFixed(2) + '%';
+      // Features with no name (e.g. grid cells) just show the value.
+      const regionName = getRegionName(feature);
+      const nameHtml = regionName ? `<div>${escapeHtml(String(regionName))}</div>` : '';
       popupInstance!.setLngLat(e.lngLat)
-        .setHTML(`<strong>${prettifyIndicator(indicatorName)}:</strong> ${displayValue}`)
+        .setHTML(`${nameHtml}<strong>${prettifyIndicator(indicatorName)}:</strong> ${displayValue}`)
         .addTo(mapInstance!);
     } else {
       mapInstance!.getCanvas().style.cursor = '';

@@ -290,6 +290,9 @@ interface ViewPanel {
   // Belongs to the current (topic, mapLayer) id-space, so it gets cleared
   // whenever either of those changes.
   selectedGeomId: string | null;
+  // The selected polygon's name from the pmtiles properties, shown in the
+  // hero readouts in place of the granularity label. Null if it has none.
+  selectedRegionName: string | null;
 }
 
 function createPanel(id: string, topic: string, layer: string): ViewPanel {
@@ -300,7 +303,7 @@ function createPanel(id: string, topic: string, layer: string): ViewPanel {
     mapLookup: {}, mapValueLookup: {}, activePlotAvailable: true,
     featureCount: '', totalLength: '', tile1Label: '',
     schoolSwitchVisible: false, schoolSubTopic: 'operator',
-    selectedGeomId: null
+    selectedGeomId: null, selectedRegionName: null
   };
 }
 
@@ -949,6 +952,7 @@ async function handleMapLayerChange(panelIdx: number, layer: string) {
   // before this feature, but now they can be showing a just-cleared
   // region's data too, so they need refreshing here as well.
   panel.selectedGeomId = null;
+  panel.selectedRegionName = null;
   const dataDatePromise = selectedCountry.value
     ? loadDataDateForLayer(selectedCountry.value, layer)
     : Promise.resolve('');
@@ -975,10 +979,11 @@ async function handleMapLayerChange(panelIdx: number, layer: string) {
 // geomId itself). The map coloring itself (mapLookup) doesn't need
 // reloading - it's already the full per-region lookup for the active
 // indicator, this just reads one entry out of it.
-function handleRegionClick(panelIdx: number, geomId: string | null) {
+function handleRegionClick(panelIdx: number, geomId: string | null, regionName: string | null = null) {
   const panel = panels.value[panelIdx];
   if (!panel) return;
   panel.selectedGeomId = geomId;
+  panel.selectedRegionName = geomId ? regionName : null;
   loadIndicatorCards(panelIdx, panel.selectedTopic);
   loadActiveIndicatorPlot(panelIdx);
   loadPanelTreemap(panelIdx);
@@ -1121,6 +1126,7 @@ async function handlePanelTopicChange(panelIdx: number, newTopic: string) {
   panel.selectedTopic = newTopic;
   panel.topicId++;
   panel.selectedGeomId = null;
+  panel.selectedRegionName = null;
   await loadPanelTopicData(panelIdx);
 }
 
@@ -1269,8 +1275,9 @@ onUnmounted(() => {
                 <span class="readout-value">{{ dataDate || '—' }}</span>
               </div>
               <div class="readout">
-                <span class="readout-label">Granularity shown</span>
-                <span class="readout-value">{{ mainPanel.mapLayer === currentLayers.countryLevel ? currentLayers.countryLevelLabel
+                <span class="readout-label">{{ mainPanel.selectedGeomId && mainPanel.selectedRegionName ? 'Region shown' : 'Admin level shown' }}</span>
+                <span class="readout-value">{{ mainPanel.selectedGeomId && mainPanel.selectedRegionName ? mainPanel.selectedRegionName
+                  : mainPanel.mapLayer === currentLayers.countryLevel ? currentLayers.countryLevelLabel
                   : mainPanel.mapLayer === currentLayers.stateLevel ? currentLayers.stateLevelLabel
                   : mainPanel.mapLayer === currentLayers.detailLevel ? currentLayers.detailLevelLabel
                   : currentLayers.h3LevelLabel }}</span>
@@ -1296,7 +1303,7 @@ onUnmounted(() => {
                 :fixedColorRange="showsForcedPercent(mainPanel) ? [0, 1] : undefined"
                 :selectedGeomId="mainPanel.selectedGeomId"
                 :boundariesAttribution="boundariesAttribution"
-                @regionClick="handleRegionClick(0, $event)"
+                @regionClick="(geomId, regionName) => handleRegionClick(0, geomId, regionName)"
               />
               <div class="map-legend" v-if="!getActiveCard(mainPanel)?.isCount && isQualityClassColored(getActiveCard(mainPanel)?.indicator || '')">
                 <span class="map-legend-title">{{ getMapLegendTitle(mainPanel) }}</span>
