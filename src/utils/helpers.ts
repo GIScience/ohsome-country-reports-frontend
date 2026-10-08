@@ -1,3 +1,5 @@
+import { i18n } from "../i18n";
+
 export function prettifyTopic(slug: string): string {
   if (!slug) return "";
   return slug
@@ -12,6 +14,27 @@ export function prettifyIndicator(name: string): string {
     .replace(/_/g, " ")
     .replace(/-/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function translateOr(key: string, fallback: string): string {
+  const { t, te } = i18n.global;
+  return te(key) || te(key, 'en') ? t(key) : fallback;
+}
+
+export function topicLabel(slug: string): string {
+  return translateOr(`topics.${slug}`, prettifyTopic(slug));
+}
+
+export function indicatorLabel(name: string): string {
+  return translateOr(`indicators.${name}`, prettifyIndicator(name));
+}
+
+export function attributeLabel(attribute: string): string {
+  return translateOr(`attributes.${attribute}`, prettifyIndicator(attribute));
+}
+
+export function countryLabel(code: string, fallback: string): string {
+  return translateOr(`countries.${code}`, fallback);
 }
 
 export interface TopicConfig {
@@ -112,6 +135,7 @@ export function getTagGroupingKey(topic: string): string {
  * coverage, gauge figures, and indicator descriptions all come from here,
  * independent of whichever grid layer a map is currently showing).
  * "detailLevel" is the finer sub-national layer used as the default map grid.
+ * The *Label fields are i18n keys (see src/locales), not display text.
  */
 export interface CountryLayers {
   countryLevel: string;
@@ -129,22 +153,22 @@ export interface CountryLayers {
 
 const DEFAULT_LAYERS: CountryLayers = {
   countryLevel: "adm0",
-  countryLevelLabel: "Admin 0",
+  countryLevelLabel: "layers.adm0",
   detailLevel: "adm1",
-  detailLevelLabel: "Admin 1",
+  detailLevelLabel: "layers.adm1",
   h3Level: "h3",
-  h3LevelLabel: "Hexagonal Grid"
+  h3LevelLabel: "layers.h3"
 };
 const COUNTRY_LAYER_OVERRIDES: Record<string, CountryLayers> = {
   DEU: {
     countryLevel: "vg2500_sta",
-    countryLevelLabel: "Germany",
+    countryLevelLabel: "layers.deuCountry",
     stateLevel: "vg2500_lan",
-    stateLevelLabel: "States",
+    stateLevelLabel: "layers.deuStates",
     detailLevel: "vg1000_krs",
-    detailLevelLabel: "Districts",
+    detailLevelLabel: "layers.deuDistricts",
     h3Level: "h3",
-    h3LevelLabel: "Hexagonal Grid"
+    h3LevelLabel: "layers.h3"
   }
 };
 

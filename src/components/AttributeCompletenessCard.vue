@@ -62,7 +62,7 @@ const dashOffset = computed(() => {
     </div>
     <div class="indicator-body">
       <div class="indicator-title-row">
-        <span class="indicator-title">Attribute Completeness</span>
+        <span class="indicator-title">{{ $t('attributeCompleteness') }}</span>
         <select
           class="attribute-select"
           :value="selected"

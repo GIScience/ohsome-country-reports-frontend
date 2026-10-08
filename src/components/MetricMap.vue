@@ -4,7 +4,8 @@ import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { colorful } from "@versatiles/style";
 import type { StyleSpecification } from "maplibre-gl";
-import { prettifyIndicator } from '../utils/helpers';
+import { indicatorLabel } from '../utils/helpers';
+import { formatNumber, formatPercent } from '../i18n';
 
 // Same basemap as HeiGIT's Hazard-Risk-Composer and Climate Action Navigator
 // (climate-action.heigit.org): a VersaTiles-hosted OSM vector style, tiles/
@@ -494,13 +495,13 @@ function setupHoverHandlers(sourceName: string, layerName: string, indicatorName
     if (val !== undefined && val !== null) {
       mapInstance!.getCanvas().style.cursor = 'pointer';
       const displayValue = props.isCountIndicator && !props.showAsPercent
-        ? Number(val).toLocaleString('en-US')
-        : (Number(val) * 100).toFixed(2) + '%';
+        ? formatNumber(Number(val))
+        : formatPercent(Number(val), 2);
       // Features with no name (e.g. grid cells) just show the value.
       const regionName = getRegionName(feature);
       const nameHtml = regionName ? `<div>${escapeHtml(String(regionName))}</div>` : '';
       popupInstance!.setLngLat(e.lngLat)
-        .setHTML(`${nameHtml}<strong>${prettifyIndicator(indicatorName)}:</strong> ${displayValue}`)
+        .setHTML(`${nameHtml}<strong>${indicatorLabel(indicatorName)}:</strong> ${displayValue}`)
         .addTo(mapInstance!);
     } else {
       mapInstance!.getCanvas().style.cursor = '';
@@ -656,6 +657,22 @@ watch(
       );
     });
   },
+);
+
+// The boundaries credit can change without the source URL changing (e.g. a
+// language switch translates its "Boundaries:" label), and the source is
+// deliberately not rebuilt for that (see updateMapData). Patch the existing
+// source's attribution instead; the attribution control only re-reads
+// sources on style/metadata events, so nudge it with a styledata event.
+watch(
+  () => props.boundariesAttribution,
+  (newAttribution) => {
+    if (!mapInstance || !isMapInitialized) return;
+    const source = mapInstance.getSource(props.sourceName) as { attribution?: string } | undefined;
+    if (!source) return;
+    source.attribution = newAttribution;
+    mapInstance.fire('styledata', { dataType: 'style' });
+  }
 );
 
 watch(
