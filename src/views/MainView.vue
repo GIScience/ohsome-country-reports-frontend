@@ -934,7 +934,21 @@ async function loadActiveIndicatorPlot(panelIdx: number) {
     axisKeys.forEach((key) => {
       fig.layout[key] = { ...fig.layout[key], automargin: true };
     });
-    fig.layout.showlegend = false;
+    // Keep the pipeline's own legend (traces like "OSM data" vs. reference
+    // need it to be readable), but lay it out horizontally along the bottom
+    // of the box: a vertical legend on the right eats too much of the narrow
+    // plot width. yref 'container' makes Plotly reserve margin for it, so it
+    // doesn't overlap the x-axis ticks.
+    fig.layout.legend = {
+      ...fig.layout.legend,
+      orientation: 'h',
+      x: 0,
+      xanchor: 'left',
+      y: 0,
+      yanchor: 'bottom',
+      yref: 'container',
+      font: { size: 10 }
+    };
 
     const isMultiAxis =
       axisKeys.filter((k) => k.startsWith('x')).length > 1 ||
