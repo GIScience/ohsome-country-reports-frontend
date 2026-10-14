@@ -41,7 +41,8 @@
     "notAvailableCountryLevel": "The indicator is not available on country level. Click on the map to get more information for a chosen region.",
     "noChart": "No chart available for this indicator.",
     "aboutIndicator": "About this indicator",
-    "tagDistributionDescription": "Distribution of mapped features grouped by tag. The map shows no per-region values for this."
+    "tagDistributionDescription": "Distribution of mapped features grouped by tag. The map shows no per-region values for this.",
+    "resizeHandle": "Drag to resize the chart (double-click to reset)"
   },
   "map": {
     "boundaries": "Boundaries"

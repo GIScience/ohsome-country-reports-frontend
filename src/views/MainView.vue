@@ -1239,6 +1239,62 @@ watch(locale, async (newLocale) => {
   }
 });
 
+// User-chosen height of the plot/treemap box, set by dragging the handle
+// under it. Null = the CSS default (240px, 160px in embed mode). Shared by
+// both containers so switching to/from tag distribution keeps the size.
+const PLOT_MIN_HEIGHT = 150;
+const PLOT_MAX_HEIGHT = 1200;
+const plotHeight = ref<number | null>(null);
+const plotHeightStyle = computed(() => plotHeight.value ? { height: `${plotHeight.value}px` } : undefined);
+
+function visiblePlotContainer(): HTMLElement | null {
+  const els = document.querySelectorAll<HTMLElement>('.plotpanel .plot-container');
+  return [...els].find(el => el.offsetParent !== null) ?? null;
+}
+
+let plotResizeFrame = 0;
+function setPlotHeight(height: number | null) {
+  plotHeight.value = height === null
+    ? null
+    : Math.round(Math.min(PLOT_MAX_HEIGHT, Math.max(PLOT_MIN_HEIGHT, height)));
+  // Plotly doesn't follow its container's size on its own - resize once per
+  // frame while dragging, after Vue has applied the new height.
+  cancelAnimationFrame(plotResizeFrame);
+  plotResizeFrame = requestAnimationFrame(async () => {
+    await nextTick();
+    const el = visiblePlotContainer();
+    if (el) Plotly.Plots.resize(el);
+  });
+}
+
+function startPlotResize(e: PointerEvent) {
+  const el = visiblePlotContainer();
+  if (!el) return;
+  e.preventDefault();
+  const handle = e.currentTarget as HTMLElement;
+  handle.setPointerCapture(e.pointerId);
+  const startY = e.clientY;
+  const startHeight = el.offsetHeight;
+  const onMove = (ev: PointerEvent) => setPlotHeight(startHeight + ev.clientY - startY);
+  const onUp = () => {
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onUp);
+    handle.removeEventListener('pointercancel', onUp);
+  };
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
+  handle.addEventListener('pointercancel', onUp);
+}
+
+function nudgePlotHeight(delta: number) {
+  const el = visiblePlotContainer();
+  if (el) setPlotHeight(el.offsetHeight + delta);
+}
+
+function resetPlotHeight() {
+  setPlotHeight(null);
+}
+
 function handleLocaleChange(newLocale: string) {
   if ((SUPPORTED_LOCALES as readonly string[]).includes(newLocale)) {
     setLocale(newLocale as typeof SUPPORTED_LOCALES[number]);
@@ -1471,14 +1527,29 @@ onUnmounted(() => {
                       :class="{ active: m === getShownTreemapMeasure(mainPanel) }"
                       @click="handleTreemapMeasureSwitch(0, m)">{{ getMeasureLabel(m) }}</button>
                   </div>
-                  <div class="plot-container" :id="'tag-treemap-' + mainPanel.id"></div>
+                  <div class="plot-container" :id="'tag-treemap-' + mainPanel.id" :style="plotHeightStyle"></div>
                 </div>
                 <div v-show="mainPanel.activeIndicatorKey !== 'tag-distribution'">
                   <h3>{{ getActiveCard(mainPanel) ? indicatorLabel(getActiveCard(mainPanel)!.indicator) : '' }}</h3>
                   <p v-if="isActiveIndicatorCountryLevelUnavailable(mainPanel)" class="plot-unavailable">{{ t('plot.notAvailableCountryLevel') }}</p>
                   <p v-else-if="!mainPanel.activePlotAvailable" class="plot-unavailable">{{ t('plot.noChart') }}</p>
-                  <div v-show="mainPanel.activePlotAvailable" class="plot-container" :id="'active-indicator-plot-' + mainPanel.id"></div>
+                  <div v-show="mainPanel.activePlotAvailable" class="plot-container" :id="'active-indicator-plot-' + mainPanel.id" :style="plotHeightStyle"></div>
                 </div>
+                <!-- Drag (or arrow keys) to make the chart taller/shorter,
+                     double-click to reset. -->
+                <div
+                  v-show="mainPanel.activeIndicatorKey === 'tag-distribution' || mainPanel.activePlotAvailable"
+                  class="plot-resize-handle"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  tabindex="0"
+                  :title="t('plot.resizeHandle')"
+                  :aria-label="t('plot.resizeHandle')"
+                  @pointerdown="startPlotResize"
+                  @dblclick="resetPlotHeight"
+                  @keydown.down.prevent="nudgePlotHeight(20)"
+                  @keydown.up.prevent="nudgePlotHeight(-20)"
+                ><span></span></div>
               </div>
               <div class="plotpanel-desc" v-if="getActiveCard(mainPanel)?.description">
                 <span class="plotpanel-desc-label">{{ t('plot.aboutIndicator') }}</span>
@@ -1707,6 +1778,20 @@ onUnmounted(() => {
   margin: 0 0 0.4rem;
 }
 .plotpanel .plot-container { height: 240px; width: 100%; }
+.plot-resize-handle {
+  display: flex; align-items: center; justify-content: center;
+  height: 14px; margin-top: 0.2rem;
+  cursor: ns-resize; touch-action: none; user-select: none;
+  border-radius: var(--radius);
+}
+.plot-resize-handle span {
+  width: 42px; height: 4px; border-radius: 2px;
+  background: var(--line-strong);
+  transition: background 0.15s ease;
+}
+.plot-resize-handle:hover span,
+.plot-resize-handle:focus-visible span { background: var(--accent); }
+.plot-resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .plot-container > div { width: 100% !important; height: 100% !important; min-height: 150px; }
 .plot-unavailable {
   height: 240px; margin: 0; display: flex; align-items: center; justify-content: center;

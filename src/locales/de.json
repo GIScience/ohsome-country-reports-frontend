@@ -41,7 +41,8 @@
     "notAvailableCountryLevel": "Der Indikator ist auf Landesebene nicht verfügbar. Klicken Sie auf die Karte, um mehr Informationen zu einer Region zu erhalten.",
     "noChart": "Für diesen Indikator ist kein Diagramm verfügbar.",
     "aboutIndicator": "Über diesen Indikator",
-    "tagDistributionDescription": "Verteilung der kartierten Objekte, gruppiert nach Tag. Die Karte zeigt hierfür keine Werte pro Region."
+    "tagDistributionDescription": "Verteilung der kartierten Objekte, gruppiert nach Tag. Die Karte zeigt hierfür keine Werte pro Region.",
+    "resizeHandle": "Ziehen, um die Grafikgröße zu ändern (Doppelklick setzt zurück)"
   },
   "map": {
     "boundaries": "Grenzen"
