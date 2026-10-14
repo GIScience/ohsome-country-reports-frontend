@@ -897,6 +897,24 @@ async function loadActiveMapLookup(panelIdx: number, topicName: string) {
 // Same margin/automargin/legend/multi-axis handling as the pipeline's other
 // figures (see git history for how those were worked out), tied to whichever
 // indicator is currently active.
+// Plotly config shared by the indicator plot and the treemap: the mode bar
+// (PNG download, zoom/pan, reset axes, ...) shows on hover. Box/lasso select
+// do nothing in this app, so they're left out. The PNG is rendered at 2x so
+// it stays sharp in reports/slides.
+function plotlyConfig(filenameParts: (string | null | undefined)[]): Partial<Plotly.Config> {
+  return {
+    responsive: true,
+    displayModeBar: 'hover',
+    displaylogo: false,
+    modeBarButtonsToRemove: ['select2d', 'lasso2d'],
+    toImageButtonOptions: {
+      format: 'png',
+      filename: filenameParts.filter(Boolean).join('_').replace(/[^\w.-]+/g, '-'),
+      scale: 2
+    }
+  };
+}
+
 async function loadActiveIndicatorPlot(panelIdx: number) {
   const panel = panels.value[panelIdx];
   const card = panel && getActiveCard(panel);
@@ -941,8 +959,10 @@ async function loadActiveIndicatorPlot(panelIdx: number) {
     // reserve enough margin for whatever font size any given figure happens
     // to use.
     fig.layout.title = undefined;
-    fig.layout.paper_bgcolor = 'rgba(0,0,0,0)';
-    fig.layout.plot_bgcolor = 'rgba(0,0,0,0)';
+    // White (= the panel's own background) rather than transparent, so an
+    // exported PNG stays readable on any background.
+    fig.layout.paper_bgcolor = '#FFFFFF';
+    fig.layout.plot_bgcolor = '#FFFFFF';
     fig.layout.margin = { t: 25, r: 10, l: 10, b: 10 };
 
     // xaxis/yaxis always included: a figure that doesn't configure an axis
@@ -982,10 +1002,9 @@ async function loadActiveIndicatorPlot(panelIdx: number) {
     }
     fig.layout.font = { family: 'Lato, sans-serif', size: 11 };
 
-    await Plotly.react(plotId, fig.data, fig.layout, {
-      responsive: true,
-      displayModeBar: false
-    });
+    await Plotly.react(plotId, fig.data, fig.layout, plotlyConfig([
+      dataCode.value, panel.mapLayer, panel.selectedTopic, card.indicator, panel.selectedGeomId
+    ]));
     // Plotly sometimes measures the container mid-layout (e.g. right after
     // this box was v-show'd visible, or before the sidebar/flex columns
     // have settled their final widths) and locks its SVG to that narrower
@@ -1160,14 +1179,15 @@ async function loadPanelTreemap(panelIdx: number) {
     const fig = byMeasure[measure]!.treemap;
     fig.layout = fig.layout || {};
     fig.layout.margin = { t: 40, r: 10, l: 10, b: 10 };
-    fig.layout.paper_bgcolor = 'rgba(0,0,0,0)';
-    fig.layout.plot_bgcolor = 'rgba(0,0,0,0)';
+    // White (= the panel's own background) rather than transparent, so an
+    // exported PNG stays readable on any background.
+    fig.layout.paper_bgcolor = '#FFFFFF';
+    fig.layout.plot_bgcolor = '#FFFFFF';
     fig.layout.font = { family: 'Lato, sans-serif', size: 11 };
 
-    await Plotly.react(treemapId, fig.data, fig.layout, {
-      responsive: true,
-      displayModeBar: false
-    });
+    await Plotly.react(treemapId, fig.data, fig.layout, plotlyConfig([
+      dataCode.value, panel.mapLayer, topicName, 'tag-distribution', groupingKey, measure, geomId
+    ]));
     // See the matching comment in loadActiveIndicatorPlot() - forces Plotly
     // to re-measure the now-settled container instead of trusting whatever
     // size it happened to catch mid-layout.
