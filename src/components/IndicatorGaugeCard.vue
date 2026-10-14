@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import IndicatorIcon, { type IndicatorIconName } from './IndicatorIcon.vue';
+import InfoLink from './InfoLink.vue';
 
 const props = withDefaults(defineProps<{
   title: string;
@@ -16,6 +17,10 @@ const props = withDefaults(defineProps<{
   // whose number isn't meant to be shown (Tag Distribution,
   // roads-thematic-accuracy).
   showValue?: boolean;
+  // Documentation link for the info button next to the title - no button
+  // when unset (e.g. Tag Distribution has no docs page).
+  infoUrl?: string | null;
+  infoLabel?: string;
   // True when every boundary in the current layer has no data for this
   // indicator - shown but not clickable, same treatment as an unavailable
   // grid-layer pill (.layer-switch button:disabled in MainView.vue).
@@ -75,6 +80,7 @@ const dashOffset = computed(() => CIRCUMFERENCE * (1 - Math.max(0, Math.min(100,
     <div class="indicator-body">
       <div class="indicator-title-row">
         <div class="indicator-title">{{ title }}</div>
+        <InfoLink v-if="infoUrl" :href="infoUrl" :label="infoLabel || title" />
       </div>
     </div>
   </article>

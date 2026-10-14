@@ -42,7 +42,8 @@
     "noChart": "Für diesen Indikator ist kein Diagramm verfügbar.",
     "aboutIndicator": "Über diesen Indikator",
     "tagDistributionDescription": "Verteilung der kartierten Objekte, gruppiert nach Tag. Die Karte zeigt hierfür keine Werte pro Region.",
-    "resizeHandle": "Ziehen, um die Grafikgröße zu ändern (Doppelklick setzt zurück)"
+    "resizeHandle": "Ziehen, um die Grafikgröße zu ändern (Doppelklick setzt zurück)",
+    "moreInfo": "Mehr Informationen in der Dokumentation"
   },
   "map": {
     "boundaries": "Grenzen"
@@ -54,6 +55,7 @@
   },
   "tagDistribution": "Tag-Verteilung",
   "indicatorWithOption": "{indicator}: {option}",
+  "indicatorInfo": "Mehr zu {indicator} (Dokumentation)",
   "indicatorGroups": {
     "allAttributes": "Alle Attribute",
     "allClasses": "Alle Klassen"

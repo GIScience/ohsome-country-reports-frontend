@@ -34,6 +34,7 @@ import {
   indicatorGroupOf,
   indicatorBase,
   indicatorOptionLabel,
+  indicatorDocsUrl,
   countryLabel
 } from '../utils/helpers';
 import { setLocale, formatNumber, formatPercent, formatDate, SUPPORTED_LOCALES } from '../i18n';
@@ -1407,6 +1408,8 @@ onUnmounted(() => {
                 <IndicatorGaugeCard
                   v-if="item.type === 'indicator'"
                   :title="indicatorLabel(item.card.indicator)"
+                  :infoUrl="indicatorDocsUrl(item.card.indicator)"
+                  :infoLabel="t('indicatorInfo', { indicator: indicatorLabel(item.card.indicator) })"
                   :displayValue="item.card.displayValue"
                   :ringPct="item.card.ringPct"
                   :level="item.card.level"
@@ -1419,6 +1422,8 @@ onUnmounted(() => {
                 <IndicatorGroupCard
                   v-else-if="item.type === 'group'"
                   :title="item.group.title"
+                  :infoUrl="indicatorDocsUrl(item.group.base)"
+                  :infoLabel="t('indicatorInfo', { indicator: item.group.title })"
                   :options="item.group.options"
                   :selected="item.group.selected"
                   :active="isGroupActive(mainPanel, item.group)"
@@ -1582,6 +1587,9 @@ onUnmounted(() => {
                 <span class="plotpanel-desc-label">{{ t('plot.aboutIndicator') }}</span>
                 <!-- formatDescriptionHtml escapes everything except known markup (units, links). -->
                 <p v-html="formatDescriptionHtml(getActiveCard(mainPanel)?.description || '')"></p>
+                <p v-if="indicatorDocsUrl(getActiveCard(mainPanel)!.indicator)">
+                  <a :href="indicatorDocsUrl(getActiveCard(mainPanel)!.indicator)!" target="_blank" rel="noopener noreferrer">{{ t('plot.moreInfo') }}</a>
+                </p>
               </div>
             </div>
           </section>

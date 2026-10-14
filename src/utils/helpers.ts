@@ -82,6 +82,34 @@ export function indicatorBase(indicator: string): string {
   return indicatorGroupOf(indicator)?.group.base ?? indicator;
 }
 
+// OQAPI documentation (same links as the ohsome-dashboard's indicator
+// info): German pages live at the root, English ones under "en/".
+const OQAPI_DOCS_URL = "https://giscience.github.io/oqapi-jupyter-book";
+const DOCUMENTED_INDICATORS = new Set([
+  "currentness",
+  "mapping-saturation",
+  "attribute-completeness",
+  "user-activity",
+  "building-comparison",
+  "roads-thematic-accuracy",
+  "land-cover-thematic-accuracy",
+  "land-cover-completeness"
+]);
+// English pages whose slug differs from the indicator key
+// (en/roads-thematic-accuracy is a 404).
+const DOCS_PAGE_OVERRIDES_EN: Record<string, string> = {
+  "roads-thematic-accuracy": "road-comparison"
+};
+
+/** Docs page for an indicator in the current UI language, or null if there is none (e.g. tag distribution). */
+export function indicatorDocsUrl(indicator: string): string | null {
+  const base = indicatorBase(indicator);
+  if (!DOCUMENTED_INDICATORS.has(base)) return null;
+  return i18n.global.locale.value === "de"
+    ? `${OQAPI_DOCS_URL}/${base}`
+    : `${OQAPI_DOCS_URL}/en/${DOCS_PAGE_OVERRIDES_EN[base] ?? base}`;
+}
+
 /** Dropdown label for one option of a group. */
 export function indicatorOptionLabel(indicator: string): string {
   const member = indicatorGroupOf(indicator);

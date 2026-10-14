@@ -42,7 +42,8 @@
     "noChart": "No chart available for this indicator.",
     "aboutIndicator": "About this indicator",
     "tagDistributionDescription": "Distribution of mapped features grouped by tag. The map shows no per-region values for this.",
-    "resizeHandle": "Drag to resize the chart (double-click to reset)"
+    "resizeHandle": "Drag to resize the chart (double-click to reset)",
+    "moreInfo": "More info in the documentation"
   },
   "map": {
     "boundaries": "Boundaries"
@@ -54,6 +55,7 @@
   },
   "tagDistribution": "Tag Distribution",
   "indicatorWithOption": "{indicator}: {option}",
+  "indicatorInfo": "More about {indicator} (documentation)",
   "indicatorGroups": {
     "allAttributes": "All attributes",
     "allClasses": "All classes"

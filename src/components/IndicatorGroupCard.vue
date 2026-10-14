@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import IndicatorIcon, { type IndicatorIconName } from './IndicatorIcon.vue';
+import InfoLink from './InfoLink.vue';
 
 export interface GroupOption {
   indicator: string;
@@ -27,6 +28,10 @@ const props = defineProps<{
   icon?: IndicatorIconName;
   // Whether the badge shows the value under the icon - see IndicatorGaugeCard.
   showValue?: boolean;
+  // Documentation link for the info button next to the title - see
+  // IndicatorGaugeCard.
+  infoUrl?: string | null;
+  infoLabel?: string;
 }>();
 
 const emit = defineEmits<{
@@ -75,7 +80,10 @@ const dashOffset = computed(() => {
     </div>
     <div class="indicator-body">
       <div class="indicator-title-row">
-        <span class="indicator-title">{{ title }}</span>
+        <span class="indicator-title-group">
+          <span class="indicator-title">{{ title }}</span>
+          <InfoLink v-if="infoUrl" :href="infoUrl" :label="infoLabel || title" />
+        </span>
         <select
           class="attribute-select"
           :value="selected"
@@ -155,6 +163,7 @@ const dashOffset = computed(() => {
   display: flex; align-items: center; justify-content: space-between;
   gap: 0.6rem; flex-wrap: wrap; margin-bottom: 0.3rem;
 }
+.indicator-title-group { display: inline-flex; align-items: center; gap: 0.3rem; }
 .indicator-title { font-size: 0.9rem; font-weight: 700; color: var(--ink); }
 .attribute-select {
   font-family: var(--font-body);
