@@ -15,7 +15,9 @@
     "selected": "Ausgewählte Region",
     "scopedNote": "— alle Angaben unten beziehen sich auf diese Region, nicht auf ganz {country}",
     "back": "← Zurück zu ganz {country}",
-    "countryFallback": "Land"
+    "countryFallback": "Land",
+    "openInDashboard": "Im ohsome Dashboard öffnen",
+    "openInDashboardHint": "Diese Region mit demselben Thema und Indikator im ohsome Dashboard analysieren (öffnet in neuem Tab)"
   },
   "hero": {
     "quality": "Qualität",

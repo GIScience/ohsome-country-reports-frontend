@@ -22,6 +22,7 @@ import {
   type PMTilesBounds
 } from '../services/dataService';
 import { clearParquetCache } from '../utils/duckdb';
+import { loadRegionGeometry } from '../services/regionGeometry';
 import {
   topicConfig,
   buildUrls,
@@ -1335,6 +1336,43 @@ function resetPlotHeight() {
   setPlotHeight(null);
 }
 
+// "Open in ohsome dashboard" for the selected region: the dashboard's
+// quality tab (backend=oqtApi) with the same topic and indicator, and the
+// region's outline as its area of interest (bpolys accepts GeoJSON). Topic
+// and indicator keys are OQAPI keys on both sides. Per-attribute/per-class
+// variants map to their base indicator - the dashboard has no URL parameter
+// for the attribute. Built ahead of time (geometry read from the boundaries
+// pmtiles, see regionGeometry.ts) so the button can be a plain link.
+const OHSOME_DASHBOARD_URL = 'https://dashboard.ohsome.org';
+const dashboardLink = ref<string | null>(null);
+let dashboardLinkGeneration = 0;
+
+watch(
+  () => [mainPanel.value?.selectedGeomId, mainPanel.value?.mapLayer, mainPanel.value?.selectedTopic,
+    mainPanel.value?.activeIndicatorKey, mainPanel.value?.selectedRegionName, pmtilesUrl.value, bounds.value, locale.value] as const,
+  async ([geomId, layer, topic, indicatorKey, regionName, tilesUrl, countryBounds, lang]) => {
+    const generation = ++dashboardLinkGeneration;
+    dashboardLink.value = null;
+    if (!geomId || !layer || !topic || !tilesUrl || !countryBounds) return;
+
+    const geometry = await loadRegionGeometry(tilesUrl, layer, geomId,
+      [countryBounds.minLon, countryBounds.minLat, countryBounds.maxLon, countryBounds.maxLat]);
+    if (generation !== dashboardLinkGeneration || !geometry) return;
+
+    const label = regionName || geomId;
+    const params = new URLSearchParams({ backend: 'oqtApi', topic });
+    // Tag distribution isn't an OQAPI indicator - the dashboard then falls
+    // back to its own default (mapping-saturation).
+    if (indicatorKey && indicatorKey !== TAG_DISTRIBUTION_KEY) params.set('indicators', indicatorBase(indicatorKey));
+    params.set('bpolys', JSON.stringify({
+      type: 'FeatureCollection',
+      features: [{ type: 'Feature', id: label, properties: { id: label, display_name: label }, geometry }]
+    }));
+    dashboardLink.value = `${OHSOME_DASHBOARD_URL}/${lang === 'de' ? 'de' : 'en'}/#${params}`;
+  },
+  { immediate: true }
+);
+
 function handleLocaleChange(newLocale: string) {
   if ((SUPPORTED_LOCALES as readonly string[]).includes(newLocale)) {
     setLocale(newLocale as typeof SUPPORTED_LOCALES[number]);
@@ -1476,9 +1514,19 @@ onUnmounted(() => {
               <span class="region-banner-text">
                 <strong>{{ t('region.selected') }}</strong> {{ t('region.scopedNote', { country: selectedCountryLabel }) }}
               </span>
-              <button type="button" class="region-banner-back" @click="handleRegionClick(0, null)">
-                {{ t('region.back', { country: selectedCountryLabel }) }}
-              </button>
+              <span class="region-banner-actions">
+                <a
+                  v-if="dashboardLink"
+                  class="region-banner-dashboard"
+                  :href="dashboardLink"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  :title="t('region.openInDashboardHint')"
+                >{{ t('region.openInDashboard') }} ↗</a>
+                <button type="button" class="region-banner-back" @click="handleRegionClick(0, null)">
+                  {{ t('region.back', { country: selectedCountryLabel }) }}
+                </button>
+              </span>
             </div>
             <div class="band" :data-level="getHeroBandLevel(mainPanel)">
               <span class="band-label">{{ getActiveCard(mainPanel)?.title || t('hero.quality') }}</span>
@@ -1719,6 +1767,15 @@ onUnmounted(() => {
   padding: 0.45rem 0.9rem; cursor: pointer; white-space: nowrap; border-radius: var(--radius);
 }
 .region-banner-back:hover { opacity: 0.85; }
+.region-banner-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+/* Outlined so it reads as secondary next to the solid "back" button. */
+.region-banner-dashboard {
+  flex: none; color: var(--accent-ink); border: 1px solid var(--accent-ink);
+  font-family: var(--font-body); font-weight: 700; font-size: 0.78rem;
+  padding: 0.4rem 0.75rem; white-space: nowrap; border-radius: var(--radius);
+  text-decoration: none;
+}
+.region-banner-dashboard:hover { background: rgba(255, 255, 255, 0.15); }
 .band {
   flex: 1 1 240px; display: flex; flex-direction: column; justify-content: center; gap: 0.35rem;
   padding: 1rem 1.3rem; background: var(--paper-raised); border: 1px solid var(--line);

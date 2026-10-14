@@ -15,7 +15,9 @@
     "selected": "Selected region",
     "scopedNote": "— every box below is scoped to this region, not all of {country}",
     "back": "← Back to all of {country}",
-    "countryFallback": "country"
+    "countryFallback": "country",
+    "openInDashboard": "Open in ohsome dashboard",
+    "openInDashboardHint": "Analyse this region with the same topic and indicator in the ohsome dashboard (opens in a new tab)"
   },
   "hero": {
     "quality": "Quality",
