@@ -44,6 +44,10 @@ const props = defineProps<{
   // saturated", not "the single darkest color" just because no region in
   // the current view happens to score higher.
   fixedColorRange?: [number, number];
+  // Hover popup shows only the region and indicator name, no value (for
+  // indicators whose number isn't meant to be shown, e.g.
+  // roads-thematic-accuracy). The map is still colored by the value.
+  hideHoverValue?: boolean;
   // Some indicators (currently mapping-saturation) color the map from a
   // rescaled/discretized value (see the parent's mapLookup special case)
   // that isn't the indicator's real value - e.g. quality class 3 rescaled
@@ -501,7 +505,9 @@ function setupHoverHandlers(sourceName: string, layerName: string, indicatorName
       const regionName = getRegionName(feature);
       const nameHtml = regionName ? `<div>${escapeHtml(String(regionName))}</div>` : '';
       popupInstance!.setLngLat(e.lngLat)
-        .setHTML(`${nameHtml}<strong>${indicatorLabel(indicatorName)}:</strong> ${displayValue}`)
+        .setHTML(props.hideHoverValue
+          ? `${nameHtml}<strong>${indicatorLabel(indicatorName)}</strong>`
+          : `${nameHtml}<strong>${indicatorLabel(indicatorName)}:</strong> ${displayValue}`)
         .addTo(mapInstance!);
     } else {
       mapInstance!.getCanvas().style.cursor = '';

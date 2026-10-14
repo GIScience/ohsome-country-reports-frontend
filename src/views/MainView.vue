@@ -183,9 +183,14 @@ function isLayerAvailable(layer?: string): boolean {
 // to use (checking indicator name alone would miss any future one, and
 // quality_class being null isn't reliable either - roads-thematic-accuracy
 // has no quality_class either despite being a genuine percentage).
-const NO_QUALITY_MARKER = 'No quality estimation will be calculated';
+// One phrase per language the pipeline writes descriptions in (DEU_DE
+// data is German, see resolveDataCode).
+const NO_QUALITY_MARKERS = [
+  'No quality estimation will be calculated',
+  'Keine Qualitätseinschätzung wird berechnet'
+];
 function isNoQualityDescription(description: string): boolean {
-  return description.includes(NO_QUALITY_MARKER);
+  return NO_QUALITY_MARKERS.some(marker => description.includes(marker));
 }
 
 // Reference-dataset comparison indicators (roads-thematic-accuracy,
@@ -214,6 +219,15 @@ function isUnavailableDescription(description: string): boolean {
 const FORCE_NON_QUALITY_INDICATORS = new Set(['roads-thematic-accuracy', 'land-cover-thematic-accuracy']);
 function isForcedNonQuality(indicator: string): boolean {
   return FORCE_NON_QUALITY_INDICATORS.has(indicatorBase(indicator));
+}
+
+// Product decision: roads-thematic-accuracy shows no number on its card, in
+// the map hover popup or as a map legend - only the accuracy icon and the
+// map coloring.
+// land-cover-thematic-accuracy keeps its percentage.
+const HIDDEN_VALUE_INDICATORS = new Set(['roads-thematic-accuracy']);
+function hidesValue(indicator: string): boolean {
+  return HIDDEN_VALUE_INDICATORS.has(indicatorBase(indicator));
 }
 
 // mapping-saturation's raw value can exceed 1.0 and doesn't always agree
@@ -1393,6 +1407,8 @@ onUnmounted(() => {
                   :level="item.card.level"
                   :active="item.card.indicator === mainPanel.activeIndicatorKey"
                   :disabled="item.card.disabled"
+                  :icon="isForcedNonQuality(item.card.indicator) ? 'accuracy' : 'people'"
+                  :showValue="!hidesValue(item.card.indicator)"
                   @click="selectIndicatorCard(0, item.card.indicator)"
                 />
                 <IndicatorGroupCard
@@ -1402,6 +1418,8 @@ onUnmounted(() => {
                   :selected="item.group.selected"
                   :active="isGroupActive(mainPanel, item.group)"
                   :disabled="item.group.options.every(o => o.disabled)"
+                  :icon="isForcedNonQuality(item.group.base) ? 'accuracy' : 'people'"
+                  :showValue="!hidesValue(item.group.base)"
                   @select="(indicator: string) => selectGroupOption(0, item.group, indicator)"
                 />
                 <IndicatorGaugeCard
@@ -1411,6 +1429,7 @@ onUnmounted(() => {
                   :ringPct="0"
                   level="neutral"
                   icon="tag"
+                  :showValue="false"
                   :active="mainPanel.activeIndicatorKey === 'tag-distribution'"
                   @click="selectIndicatorCard(0, 'tag-distribution')"
                 />
@@ -1475,6 +1494,7 @@ onUnmounted(() => {
                 :isCountIndicator="getActiveCard(mainPanel)?.isCount || false"
                 :showAsPercent="showsForcedPercent(mainPanel)"
                 :fixedColorRange="showsForcedPercent(mainPanel) ? [0, 1] : undefined"
+                :hideHoverValue="hidesValue(getActiveCard(mainPanel)?.indicator || '')"
                 :selectedGeomId="mainPanel.selectedGeomId"
                 :boundariesAttribution="boundariesAttribution"
                 @regionClick="(geomId, regionName) => handleRegionClick(0, geomId, regionName)"
@@ -1491,7 +1511,9 @@ onUnmounted(() => {
                 <div><i style="background:#F0E442;"></i>25&ndash;75%</div>
                 <div><i style="background:#D55E00;"></i>0&ndash;25%</div>
               </div>
-              <div class="map-legend map-legend--gradient" v-else-if="getActiveCard(mainPanel)">
+              <!-- No legend for indicators whose value isn't shown (hidesValue) -
+                   its 0-100% scale would reveal the number anyway. -->
+              <div class="map-legend map-legend--gradient" v-else-if="getActiveCard(mainPanel) && !hidesValue(getActiveCard(mainPanel)!.indicator)">
                 <span class="map-legend-title">{{ getMapLegendTitle(mainPanel) }}</span>
                 <span class="legend-cap">{{ getLegendCapText(mainPanel, 'max') }}</span>
                 <div class="legend-gradient-bar"></div>

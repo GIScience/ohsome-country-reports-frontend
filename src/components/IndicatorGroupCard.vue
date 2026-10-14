@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import IndicatorIcon, { type IndicatorIconName } from './IndicatorIcon.vue';
 
 export interface GroupOption {
   indicator: string;
@@ -9,6 +10,9 @@ export interface GroupOption {
   level: 'good' | 'warn' | 'bad' | 'neutral';
   description: string;
   disabled: boolean;
+  // Not a graded quality score (raw count, or thematic accuracy) - shown
+  // as an icon badge instead of a percentage ring.
+  isCount?: boolean;
 }
 
 const props = defineProps<{
@@ -19,6 +23,10 @@ const props = defineProps<{
   // True when every option has no data - the whole card is then shown but
   // not selectable, same treatment as an unavailable grid layer.
   disabled?: boolean;
+  // Badge icon for options with isCount - see IndicatorGaugeCard's icon.
+  icon?: IndicatorIconName;
+  // Whether the badge shows the value under the icon - see IndicatorGaugeCard.
+  showValue?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -47,7 +55,11 @@ const dashOffset = computed(() => {
     @keydown.enter="!disabled && emit('select', current?.indicator || selected)"
     @keydown.space.prevent="!disabled && emit('select', current?.indicator || selected)"
   >
-    <div class="gaugewrap">
+    <div v-if="current?.isCount" class="count-badge">
+      <IndicatorIcon :icon="icon ?? 'people'" />
+      <div v-if="showValue !== false" class="count-value">{{ current.displayValue }}</div>
+    </div>
+    <div v-else class="gaugewrap">
       <svg viewBox="0 0 72 72">
         <circle class="ring-track" cx="36" cy="36" r="30" />
         <circle
@@ -125,6 +137,17 @@ const dashOffset = computed(() => {
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-mono); font-weight: 600; font-size: 0.95rem;
   color: var(--ink);
+}
+
+.count-badge {
+  flex: none; width: 4.6rem; height: 4.6rem;
+  border-radius: 50%; background: var(--line);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.15rem;
+  color: var(--ink-soft);
+}
+.count-value {
+  font-family: var(--font-mono); font-weight: 700; font-size: 0.68rem;
+  color: var(--ink); text-align: center; padding: 0 0.2rem; line-height: 1.1;
 }
 
 .indicator-body { flex: 1; min-width: 0; }
