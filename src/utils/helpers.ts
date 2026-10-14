@@ -26,11 +26,67 @@ export function topicLabel(slug: string): string {
 }
 
 export function indicatorLabel(name: string): string {
+  const member = indicatorGroupOf(name);
+  if (member?.suffix) {
+    return i18n.global.t('indicatorWithOption', {
+      indicator: indicatorLabel(member.group.base),
+      option: member.group.optionLabel(member.suffix)
+    });
+  }
   return translateOr(`indicators.${name}`, prettifyIndicator(name));
 }
 
 export function attributeLabel(attribute: string): string {
   return translateOr(`attributes.${attribute}`, prettifyIndicator(attribute));
+}
+
+/** CORINE Land Cover level-2 class codes (e.g. "31" = Forests). */
+export function landCoverClassLabel(code: string): string {
+  return translateOr(`landCoverClasses.${code}`, code);
+}
+
+/**
+ * Indicators the pipeline writes once per attribute/class, as
+ * "<base>_<suffix>" (e.g. roads-thematic-accuracy_name), which the sidebar
+ * shows as one card with a dropdown instead of one card each. A bare "<base>"
+ * row, if present, is the across-all-attributes/classes variant and becomes
+ * the dropdown's "All" option.
+ */
+export interface IndicatorGroup {
+  base: string;
+  // i18n key for the bare (all attributes/classes) option's label.
+  allLabelKey: string;
+  optionLabel: (suffix: string) => string;
+  // Option selected by default. Undefined: fall back to the topic's
+  // topicConfig.completenessIndicator.
+  defaultIndicator?: string;
+}
+
+export const INDICATOR_GROUPS: IndicatorGroup[] = [
+  { base: "attribute-completeness", allLabelKey: "indicatorGroups.allAttributes", optionLabel: attributeLabel },
+  { base: "roads-thematic-accuracy", allLabelKey: "indicatorGroups.allAttributes", optionLabel: attributeLabel, defaultIndicator: "roads-thematic-accuracy_name" },
+  { base: "land-cover-thematic-accuracy", allLabelKey: "indicatorGroups.allClasses", optionLabel: landCoverClassLabel, defaultIndicator: "land-cover-thematic-accuracy" }
+];
+
+/** The group an indicator belongs to, and its suffix (null for the bare "all" variant). */
+export function indicatorGroupOf(indicator: string): { group: IndicatorGroup; suffix: string | null } | null {
+  for (const group of INDICATOR_GROUPS) {
+    if (indicator === group.base) return { group, suffix: null };
+    if (indicator.startsWith(`${group.base}_`)) return { group, suffix: indicator.slice(group.base.length + 1) };
+  }
+  return null;
+}
+
+/** The group's base name for grouped indicators, the indicator itself otherwise. */
+export function indicatorBase(indicator: string): string {
+  return indicatorGroupOf(indicator)?.group.base ?? indicator;
+}
+
+/** Dropdown label for one option of a group. */
+export function indicatorOptionLabel(indicator: string): string {
+  const member = indicatorGroupOf(indicator);
+  if (!member) return indicatorLabel(indicator);
+  return member.suffix ? member.group.optionLabel(member.suffix) : i18n.global.t(member.group.allLabelKey);
 }
 
 export function countryLabel(code: string, fallback: string): string {

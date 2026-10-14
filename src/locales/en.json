@@ -52,9 +52,13 @@
     "imprint": "Imprint"
   },
   "tagDistribution": "Tag Distribution",
-  "attributeCompleteness": "Attribute Completeness",
-  "attributeCompletenessWithAttr": "Attribute Completeness: {attr}",
+  "indicatorWithOption": "{indicator}: {option}",
+  "indicatorGroups": {
+    "allAttributes": "All attributes",
+    "allClasses": "All classes"
+  },
   "indicators": {
+    "attribute-completeness": "Attribute Completeness",
     "currentness": "Currentness",
     "mapping-saturation": "Mapping Saturation",
     "building-comparison": "Building Comparison",
@@ -73,7 +77,27 @@
     "maxspeed": "Maxspeed",
     "surface": "Surface",
     "phone-number": "Phone Number",
-    "website": "Website"
+    "website": "Website",
+    "lanes": "Lanes",
+    "oneway": "Oneway",
+    "width": "Width"
+  },
+  "landCoverClasses": {
+    "11": "Urban fabric",
+    "12": "Industrial, commercial and transport units",
+    "13": "Mine, dump and construction sites",
+    "14": "Artificial, non-agricultural vegetated areas",
+    "21": "Arable land",
+    "22": "Permanent crops",
+    "23": "Pastures",
+    "24": "Heterogeneous agricultural areas",
+    "31": "Forests",
+    "32": "Scrub and/or herbaceous vegetation",
+    "33": "Open spaces with little or no vegetation",
+    "41": "Inland wetlands",
+    "42": "Maritime wetlands",
+    "51": "Inland waters",
+    "52": "Marine waters"
   },
   "topics": {
     "roads": "Roads",

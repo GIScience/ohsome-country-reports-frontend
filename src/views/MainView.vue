@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n';
 import ReportFooter from '../components/ReportFooter.vue';
 import MetricMap from '../components/MetricMap.vue';
 import IndicatorGaugeCard from '../components/IndicatorGaugeCard.vue';
-import AttributeCompletenessCard from '../components/AttributeCompletenessCard.vue';
+import IndicatorGroupCard from '../components/IndicatorGroupCard.vue';
 import ohsomeLogo from '../assets/images/ohsome-quality-api_2000px.png';
 import {
   fetchAvailableCountries,
@@ -31,7 +31,9 @@ import {
   formatDescriptionHtml,
   topicLabel,
   indicatorLabel,
-  attributeLabel,
+  indicatorGroupOf,
+  indicatorBase,
+  indicatorOptionLabel,
   countryLabel
 } from '../utils/helpers';
 import { setLocale, formatNumber, formatPercent, formatDate, SUPPORTED_LOCALES } from '../i18n';
@@ -206,7 +208,13 @@ function isUnavailableDescription(description: string): boolean {
 // product decision they're forced into the same non-quality/count-badge
 // treatment as user-activity anyway - just with their percentage kept as
 // the displayed value instead of being (wrongly) rounded to a bare "1".
+// Matched by group base (see indicatorBase), so the per-attribute/per-class
+// variants (roads-thematic-accuracy_name, land-cover-thematic-accuracy_31)
+// get the same treatment.
 const FORCE_NON_QUALITY_INDICATORS = new Set(['roads-thematic-accuracy', 'land-cover-thematic-accuracy']);
+function isForcedNonQuality(indicator: string): boolean {
+  return FORCE_NON_QUALITY_INDICATORS.has(indicatorBase(indicator));
+}
 
 // mapping-saturation's raw value can exceed 1.0 and doesn't always agree
 // with the pipeline's own discretized 1-5 quality_class (two regions with
@@ -228,7 +236,7 @@ const QUALITY_CLASS_LEVEL_INDICATORS = new Set([
 // every one of them - this treats any attribute-completeness_* indicator
 // the same as an explicit QUALITY_CLASS_LEVEL_INDICATORS entry.
 function isQualityClassColored(indicator: string): boolean {
-  return QUALITY_CLASS_LEVEL_INDICATORS.has(indicator) || indicator.startsWith('attribute-completeness_');
+  return QUALITY_CLASS_LEVEL_INDICATORS.has(indicator) || indicatorBase(indicator) === 'attribute-completeness';
 }
 
 interface IndicatorCard {
@@ -255,15 +263,16 @@ interface IndicatorCard {
   // down, reachable by clicking a region on the map.
   noCountryLevelData: boolean;
 }
-interface AttributeOption {
-  indicator: string;
+// One option in an indicator group's dropdown (see INDICATOR_GROUPS in
+// helpers.ts) - a full card, plus the short label the dropdown shows.
+interface GroupOption extends IndicatorCard {
   label: string;
-  displayValue: string;
-  ringPct: number;
-  level: 'good' | 'warn' | 'bad' | 'neutral';
-  description: string;
-  disabled: boolean;
-  noCountryLevelData: boolean;
+}
+interface IndicatorGroupState {
+  base: string;
+  title: string;
+  options: GroupOption[];
+  selected: string;
 }
 
 function levelFromAvg(avg: number): 'good' | 'warn' | 'bad' {
@@ -286,8 +295,9 @@ interface ViewPanel {
   mapLayer: string;
   activeIndicatorKey: string;
   indicatorCards: IndicatorCard[];
-  attributeOptions: AttributeOption[];
-  selectedAttributeIndicator: string;
+  // Grouped indicators (attribute completeness, thematic accuracy per
+  // attribute/class), each shown as one dropdown card.
+  indicatorGroups: IndicatorGroupState[];
   mapLookup: Record<string, number>;
   // Same per-region data as mapLookup, but always the indicator's real
   // value, never rescaled for map-coloring purposes (see mapLookup's
@@ -322,7 +332,7 @@ function createPanel(id: string, topic: string, layer: string): ViewPanel {
   return {
     id, selectedTopic: topic, topicId: 0,
     indicators: [], mapLayer: layer, activeIndicatorKey: 'currentness',
-    indicatorCards: [], attributeOptions: [], selectedAttributeIndicator: '',
+    indicatorCards: [], indicatorGroups: [],
     mapLookup: {}, mapValueLookup: {}, activePlotAvailable: true,
     featureCount: '', totalLength: '', tile1Label: '',
     schoolSwitchVisible: false, schoolSubTopic: 'operator',
@@ -363,25 +373,15 @@ function getActiveCard(panel: ViewPanel): IndicatorCard | null {
   const fromRegular = panel.indicatorCards.find(c => c.indicator === panel.activeIndicatorKey);
   if (fromRegular) return fromRegular;
 
-  const fromAttr = panel.attributeOptions.find(o => o.indicator === panel.activeIndicatorKey);
-  if (fromAttr) {
-    return {
-      indicator: fromAttr.indicator,
-      title: t('attributeCompletenessWithAttr', { attr: fromAttr.label }),
-      displayValue: fromAttr.displayValue,
-      ringPct: fromAttr.ringPct,
-      level: fromAttr.level,
-      isCount: false,
-      disabled: fromAttr.disabled,
-      noCountryLevelData: fromAttr.noCountryLevelData,
-      description: fromAttr.description
-    };
+  for (const group of panel.indicatorGroups) {
+    const option = group.options.find(o => o.indicator === panel.activeIndicatorKey);
+    if (option) return option;
   }
   return null;
 }
 
-function isAttributeGroupActive(panel: ViewPanel): boolean {
-  return panel.attributeOptions.some(o => o.indicator === panel.activeIndicatorKey);
+function isGroupActive(panel: ViewPanel, group: IndicatorGroupState): boolean {
+  return group.options.some(o => o.indicator === panel.activeIndicatorKey);
 }
 
 // True when the active indicator has data somewhere (enabled at all, see
@@ -399,7 +399,7 @@ function isActiveIndicatorCountryLevelUnavailable(panel: ViewPanel): boolean {
 // hover popup and legend caps need to know this too, so they read as "95%"
 // rather than a bare "0.95".
 function showsForcedPercent(panel: ViewPanel): boolean {
-  return FORCE_NON_QUALITY_INDICATORS.has(getActiveCard(panel)?.indicator || '');
+  return isForcedNonQuality(getActiveCard(panel)?.indicator || '');
 }
 
 // What the map's color scale actually represents for whichever indicator is
@@ -418,7 +418,7 @@ function getMapLegendTitle(panel: ViewPanel): string {
   if (!card) return '';
   if (card.indicator === TAG_DISTRIBUTION_KEY) return t('legend.featuresMapped');
   if (card.indicator === 'user-activity') return t('legend.users');
-  if (FORCE_NON_QUALITY_INDICATORS.has(card.indicator)) return t('legend.featuresMatched');
+  if (isForcedNonQuality(card.indicator)) return t('legend.featuresMatched');
   return card.isCount ? t('legend.count') : t('legend.qualityClass');
 }
 
@@ -439,7 +439,7 @@ function getLegendCapText(panel: ViewPanel, which: 'min' | 'max'): string {
 // more, different kind of thing" rather than blending into the list.
 type StackItem =
   | { type: 'indicator'; card: IndicatorCard }
-  | { type: 'attribute-group' }
+  | { type: 'group'; group: IndicatorGroupState }
   | { type: 'tag-distribution' };
 
 function getIndicatorStackItems(panel: ViewPanel): StackItem[] {
@@ -460,8 +460,12 @@ function getIndicatorStackItems(panel: ViewPanel): StackItem[] {
     title: indicatorLabel(card.indicator),
     item: { type: 'indicator', card }
   }));
-  if (panel.attributeOptions.length > 0) {
-    entries.push({ rank: 0, title: t('attributeCompleteness'), item: { type: 'attribute-group' } });
+  for (const group of panel.indicatorGroups) {
+    entries.push({
+      rank: group.options.some(o => o.isCount) ? 1 : 0,
+      title: group.title,
+      item: { type: 'group', group }
+    });
   }
   entries.sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title, locale.value));
   const items = entries.map(e => e.item);
@@ -473,7 +477,9 @@ function getIndicatorStackItems(panel: ViewPanel): StackItem[] {
 }
 
 function stackItemKey(item: StackItem): string {
-  return item.type === 'indicator' ? item.card.indicator : item.type;
+  if (item.type === 'indicator') return item.card.indicator;
+  if (item.type === 'group') return `group:${item.group.base}`;
+  return item.type;
 }
 
 // The hero band reflects whichever indicator is currently active. With no
@@ -659,15 +665,15 @@ async function loadCountry(code: string, updateTopics: boolean) {
 // layer's file instead of the country-level average - same idea as the plot
 // and treemap, just for the values behind the cards/bars. Every indicator
 // available for the topic gets its own card - some topics have up to 7, and
-// attribute-completeness_* variants are grouped into one dropdown card
-// instead of one each, since a topic can have 4+ of them.
+// per-attribute/per-class variants (attribute-completeness_*,
+// roads-thematic-accuracy_*, land-cover-thematic-accuracy_*) are grouped into
+// one dropdown card per group instead of one each (see INDICATOR_GROUPS).
 async function loadIndicatorCards(panelIdx: number, topicName: string) {
   const panel = panels.value[panelIdx];
   if (!panel) return;
   if (!parquetUrl.value || panel.indicators.length === 0 || !selectedCountry.value) {
     panel.indicatorCards = [];
-    panel.attributeOptions = [];
-    panel.selectedAttributeIndicator = '';
+    panel.indicatorGroups = [];
     return;
   }
 
@@ -719,15 +725,14 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
     });
   }
 
-  const regularCards: IndicatorCard[] = [];
-  const attrOptions: AttributeOption[] = [];
+  const allCards: IndicatorCard[] = [];
 
   allIndicators.forEach((indicator, i) => {
     const { avg, qualityClass, description, hasData, countryLevelHasData } = getValue(indicator, i);
     if (isUnavailableDescription(description)) return;
 
     const isRawCount = isNoQualityDescription(description);
-    const isCount = isRawCount || FORCE_NON_QUALITY_INDICATORS.has(indicator);
+    const isCount = isRawCount || isForcedNonQuality(indicator);
     // Same reasoning as the map's fixedColorRange/color source (see
     // loadActiveMapLookup): mapping-saturation's raw value can exceed 1.0
     // and doesn't always agree with the pipeline's own discretized
@@ -756,65 +761,74 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
     // string, so blanking it here is enough.
     const displayedDescription = countryLevelHasData ? description : '';
 
-    if (indicator.startsWith('attribute-completeness_')) {
-      attrOptions.push({
-        indicator,
-        label: attributeLabel(indicator.replace('attribute-completeness_', '')),
-        displayValue: countryLevelHasData ? formatPercent(avg) : '—',
-        ringPct: countryLevelHasData ? Math.round(avg * 100) : 0,
-        level: countryLevelHasData ? levelFromAvg(avg) : 'neutral',
-        description: displayedDescription,
-        disabled: !hasData,
-        noCountryLevelData: !countryLevelHasData
-      });
-    } else {
-      regularCards.push({
-        indicator,
-        title: indicatorLabel(indicator),
-        // isRawCount (not isCount) here: roads-thematic-accuracy is forced
-        // into the non-quality/count-badge treatment below, but its own
-        // value is still a real 0-1 ratio, not a raw count - rounding that
-        // to a bare integer would (wrongly) show "1" instead of "95%".
-        displayValue: !countryLevelHasData ? '—' : isRawCount ? formatNumber(Math.round(avg)) : formatPercent(avg),
-        ringPct: !countryLevelHasData ? 0 : isRawCount ? 0 : Math.round(avg * 100),
-        level,
-        isCount,
-        disabled: !hasData,
-        noCountryLevelData: !countryLevelHasData,
-        description: displayedDescription
-      });
-    }
+    allCards.push({
+      indicator,
+      title: indicatorLabel(indicator),
+      // isRawCount (not isCount) here: roads-thematic-accuracy is forced
+      // into the non-quality/count-badge treatment below, but its own
+      // value is still a real 0-1 ratio, not a raw count - rounding that
+      // to a bare integer would (wrongly) show "1" instead of "95%".
+      displayValue: !countryLevelHasData ? '—' : isRawCount ? formatNumber(Math.round(avg)) : formatPercent(avg),
+      ringPct: !countryLevelHasData ? 0 : isRawCount ? 0 : Math.round(avg * 100),
+      // The attribute-completeness ring has always been colored by the raw
+      // percentage, not quality_class (the map/hero band still use the
+      // latter, via isQualityClassColored).
+      level: countryLevelHasData && indicatorBase(indicator) === 'attribute-completeness' ? levelFromAvg(avg) : level,
+      isCount,
+      disabled: !hasData,
+      noCountryLevelData: !countryLevelHasData,
+      description: displayedDescription
+    });
+  });
+
+  // A group only becomes a dropdown card once it has at least one
+  // per-attribute/per-class variant - a lone bare indicator (e.g. a data
+  // set without the variants) stays a plain card.
+  const groupMembers = new Map<string, IndicatorCard[]>();
+  for (const card of allCards) {
+    const member = indicatorGroupOf(card.indicator);
+    if (!member) continue;
+    const list = groupMembers.get(member.group.base) ?? [];
+    list.push(card);
+    groupMembers.set(member.group.base, list);
+  }
+  const groupedBases = new Set(
+    [...groupMembers].filter(([, cards]) => cards.some(c => indicatorGroupOf(c.indicator)?.suffix)).map(([base]) => base)
+  );
+
+  const regularCards = allCards.filter(c => !groupedBases.has(indicatorBase(c.indicator)));
+  const groups: IndicatorGroupState[] = [...groupedBases].map(base => {
+    const options: GroupOption[] = groupMembers.get(base)!
+      .map(card => ({ ...card, label: indicatorOptionLabel(card.indicator) }))
+      // The bare "All" option first, then the variants by name.
+      .sort((a, b) => (a.indicator === base ? -1 : b.indicator === base ? 1 : a.indicator.localeCompare(b.indicator)));
+    const preferred = indicatorGroupOf(base)!.group.defaultIndicator ?? topicConfig[topicName]?.completenessIndicator;
+    const previous = panel.indicatorGroups.find(g => g.base === base)?.selected;
+    const availableOptions = options.filter(o => !o.disabled);
+    // Keep the previous choice while it still has data. Otherwise prefer a
+    // variant that actually has data - falls back to the product-preferred
+    // one (or the first option) only when every variant is disabled, since
+    // there's no better choice available then anyway.
+    const selected = (previous && availableOptions.some(o => o.indicator === previous))
+      ? previous
+      : availableOptions.find(o => o.indicator === preferred)?.indicator
+        ?? availableOptions[0]?.indicator
+        ?? (options.some(o => o.indicator === preferred) ? preferred! : options[0].indicator);
+    return { base, title: indicatorLabel(base), options, selected };
   });
 
   panel.indicatorCards = regularCards;
-  panel.attributeOptions = attrOptions;
+  panel.indicatorGroups = groups;
 
-  if (attrOptions.length > 0) {
-    const preferred = topicConfig[topicName]?.completenessIndicator;
-    const stillValid = attrOptions.some(o => o.indicator === panel.selectedAttributeIndicator && !o.disabled);
-    if (!stillValid) {
-      // Prefer a variant that actually has data - falls back to the
-      // product-preferred one (or the first option) only when every variant
-      // is disabled, since there's no better choice available then anyway.
-      const availableOptions = attrOptions.filter(o => !o.disabled);
-      const preferredAvailable = preferred && availableOptions.find(o => o.indicator === preferred);
-      panel.selectedAttributeIndicator = preferredAvailable
-        ? preferredAvailable.indicator
-        : availableOptions[0]?.indicator
-          ?? (preferred && attrOptions.some(o => o.indicator === preferred) ? preferred : attrOptions[0].indicator);
-    }
-  } else {
-    panel.selectedAttributeIndicator = '';
-  }
-
-  const selectableKeys = [...regularCards.map(c => c.indicator), ...attrOptions.map(o => o.indicator)];
+  const groupOptions = groups.flatMap(g => g.options);
+  const selectableKeys = [...regularCards.map(c => c.indicator), ...groupOptions.map(o => o.indicator)];
   if (!selectableKeys.includes(panel.activeIndicatorKey) && panel.activeIndicatorKey !== TAG_DISTRIBUTION_KEY) {
     // Prefer an indicator that actually has data for this layer over one
     // that's disabled - only fall back to a disabled one (or 'currentness'
     // by name) when literally everything is empty, so a topic switch
     // doesn't land on a blank-map indicator while a usable one sits right
     // next to it in the list.
-    const availableKeys = [...regularCards.filter(c => !c.disabled).map(c => c.indicator), ...attrOptions.filter(o => !o.disabled).map(o => o.indicator)];
+    const availableKeys = [...regularCards.filter(c => !c.disabled).map(c => c.indicator), ...groupOptions.filter(o => !o.disabled).map(o => o.indicator)];
     panel.activeIndicatorKey = availableKeys.includes('currentness')
       ? 'currentness'
       : availableKeys[0]
@@ -964,10 +978,10 @@ function selectIndicatorCard(panelIdx: number, indicator: string) {
   refreshActiveIndicator(panelIdx, panel.selectedTopic);
 }
 
-function selectAttributeOption(panelIdx: number, indicator: string) {
+function selectGroupOption(panelIdx: number, group: IndicatorGroupState, indicator: string) {
   const panel = panels.value[panelIdx];
   if (!panel) return;
-  panel.selectedAttributeIndicator = indicator;
+  group.selected = indicator;
   selectIndicatorCard(panelIdx, indicator);
 }
 
@@ -1311,13 +1325,14 @@ onUnmounted(() => {
                   :disabled="item.card.disabled"
                   @click="selectIndicatorCard(0, item.card.indicator)"
                 />
-                <AttributeCompletenessCard
-                  v-else-if="item.type === 'attribute-group'"
-                  :options="mainPanel.attributeOptions"
-                  :selected="mainPanel.selectedAttributeIndicator"
-                  :active="isAttributeGroupActive(mainPanel)"
-                  :disabled="mainPanel.attributeOptions.every(o => o.disabled)"
-                  @select="(indicator: string) => selectAttributeOption(0, indicator)"
+                <IndicatorGroupCard
+                  v-else-if="item.type === 'group'"
+                  :title="item.group.title"
+                  :options="item.group.options"
+                  :selected="item.group.selected"
+                  :active="isGroupActive(mainPanel, item.group)"
+                  :disabled="item.group.options.every(o => o.disabled)"
+                  @select="(indicator: string) => selectGroupOption(0, item.group, indicator)"
                 />
                 <IndicatorGaugeCard
                   v-else

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-export interface AttributeOption {
+export interface GroupOption {
   indicator: string;
   label: string;
   displayValue: string;
@@ -12,7 +12,8 @@ export interface AttributeOption {
 }
 
 const props = defineProps<{
-  options: AttributeOption[];
+  title: string;
+  options: GroupOption[];
   selected: string;
   active: boolean;
   // True when every option has no data - the whole card is then shown but
@@ -62,7 +63,7 @@ const dashOffset = computed(() => {
     </div>
     <div class="indicator-body">
       <div class="indicator-title-row">
-        <span class="indicator-title">{{ $t('attributeCompleteness') }}</span>
+        <span class="indicator-title">{{ title }}</span>
         <select
           class="attribute-select"
           :value="selected"

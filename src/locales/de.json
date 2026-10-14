@@ -52,9 +52,13 @@
     "imprint": "Impressum"
   },
   "tagDistribution": "Tag-Verteilung",
-  "attributeCompleteness": "Attributvollständigkeit",
-  "attributeCompletenessWithAttr": "Attributvollständigkeit: {attr}",
+  "indicatorWithOption": "{indicator}: {option}",
+  "indicatorGroups": {
+    "allAttributes": "Alle Attribute",
+    "allClasses": "Alle Klassen"
+  },
   "indicators": {
+    "attribute-completeness": "Attributvollständigkeit",
     "currentness": "Aktualität",
     "mapping-saturation": "Kartierungssättigung",
     "building-comparison": "Gebäudevergleich",
@@ -73,7 +77,27 @@
     "maxspeed": "Höchstgeschwindigkeit",
     "surface": "Oberfläche",
     "phone-number": "Telefonnummer",
-    "website": "Webseite"
+    "website": "Webseite",
+    "lanes": "Fahrstreifen",
+    "oneway": "Einbahnstraße",
+    "width": "Breite"
+  },
+  "landCoverClasses": {
+    "11": "Städtisch geprägte Flächen",
+    "12": "Industrie-, Gewerbe- und Verkehrsflächen",
+    "13": "Abbau-, Deponie- und Baustellen",
+    "14": "Grünflächen",
+    "21": "Ackerflächen",
+    "22": "Dauerkulturen",
+    "23": "Grünland",
+    "24": "Heterogene landwirtschaftliche Flächen",
+    "31": "Wälder",
+    "32": "Sträucher und Krautvegetation",
+    "33": "Offene Flächen ohne / mit geringer Vegetation",
+    "41": "Feuchtflächen im Landesinneren",
+    "42": "Feuchtflächen an der Küste",
+    "51": "Wasserflächen im Landesinneren",
+    "52": "Meeresgewässer"
   },
   "topics": {
     "roads": "Straßen",
