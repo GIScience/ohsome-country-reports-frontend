@@ -1,6 +1,7 @@
 import { initDuckDB, registerParquetFile, runQuery } from "../utils/duckdb";
 import { PMTiles } from "pmtiles";
 import { CANDIDATE_COUNTRIES } from "../config/countries";
+import { buildUrls, getCountryLayers, localizedDataCode } from "../utils/helpers";
 
 export interface Country {
   code: string;
@@ -30,6 +31,27 @@ export async function checkParquetExists(url: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// One HEAD per country/language pair at most - keyed "<CODE>|<locale>".
+const dataCodeCache = new Map<string, Promise<string>>();
+
+/** The code to build data URLs with for a country in a UI language: the
+ * localized variant (e.g. "DEU_DE") if the pipeline published one - judged by
+ * its country-level long parquet - otherwise the plain English code. Resolved
+ * per country, not per file, so boundaries and parquets always come from the
+ * same set. */
+export function resolveDataCode(code: string, locale: string): Promise<string> {
+  const candidate = localizedDataCode(code, locale);
+  if (candidate === code) return Promise.resolve(code);
+  const key = `${code}|${locale}`;
+  let cached = dataCodeCache.get(key);
+  if (!cached) {
+    const url = buildUrls(candidate, getCountryLayers(code).countryLevel).parquetUrl;
+    cached = checkParquetExists(url).then(exists => (exists ? candidate : code));
+    dataCodeCache.set(key, cached);
+  }
+  return cached;
 }
 
 async function loadCountryYaml(): Promise<Record<string, any>> {

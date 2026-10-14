@@ -18,6 +18,7 @@ import {
   loadIndicatorFigure,
   loadLatestTimestamp,
   checkParquetExists,
+  resolveDataCode,
   type PMTilesBounds
 } from '../services/dataService';
 import { clearParquetCache } from '../utils/duckdb';
@@ -138,6 +139,11 @@ const dataDateText = computed(() => dataDate.value ? formatDate(dataDate.value) 
 
 const pmtilesUrl = ref('');
 const parquetUrl = ref('');
+// Code the data URLs are built with: the country code itself, or its
+// localized variant (e.g. DEU_DE) when the UI is German and the pipeline
+// published one - see resolveDataCode(). Layers/hash/labels keep using
+// selectedCountry.
+const dataCode = ref('');
 
 const bounds = ref<PMTilesBounds | null>(null);
 
@@ -557,8 +563,8 @@ watch(selectedCountry, async (newCountry) => {
 // layer's own tag-distribution file, not hardcoded to the country level -
 // different layers can be processed at different times, so "current as of"
 // should reflect whichever layer is actually selected on screen.
-async function loadDataDateForLayer(code: string, layer: string): Promise<string> {
-  const url = buildUrls(code, layer).tagDistributionUrl;
+async function loadDataDateForLayer(dataCode: string, layer: string): Promise<string> {
+  const url = buildUrls(dataCode, layer).tagDistributionUrl;
   const latestTimestamp = await loadLatestTimestamp(url);
   return latestTimestamp ?? '';
 }
@@ -577,7 +583,10 @@ async function loadCountry(code: string, updateTopics: boolean) {
   isLoading.value = true;
 
   const layers = getCountryLayers(code);
-  const urls = buildUrls(code, layers.countryLevel);
+  const resolvedDataCode = await resolveDataCode(code, locale.value);
+  if (!isCurrent()) return;
+  dataCode.value = resolvedDataCode;
+  const urls = buildUrls(resolvedDataCode, layers.countryLevel);
   pmtilesUrl.value = urls.pmtilesUrl;
   parquetUrl.value = urls.parquetUrl;
 
@@ -595,7 +604,7 @@ async function loadCountry(code: string, updateTopics: boolean) {
     const [pmtilesBounds, layerChecks] = await Promise.all([
       getPMTilesBounds(urls.pmtilesUrl),
       Promise.all(layerCandidates.map(async (layer) => {
-        const exists = await checkParquetExists(buildUrls(code, layer).parquetUrl);
+        const exists = await checkParquetExists(buildUrls(resolvedDataCode, layer).parquetUrl);
         return exists ? layer : null;
       }))
     ]);
@@ -612,9 +621,13 @@ async function loadCountry(code: string, updateTopics: boolean) {
       const preferredOrder = [layers.h3Level, layers.detailLevel, layers.stateLevel, layers.countryLevel]
         .filter(Boolean) as string[];
       defaultLayer = preferredOrder.find(l => newAvailableLayers.has(l)) || layers.h3Level;
+    } else if (mainPanel.value?.mapLayer) {
+      // Same country reloaded (e.g. language switch to another data set) -
+      // the panel keeps its layer, so date that one.
+      defaultLayer = mainPanel.value.mapLayer;
     }
 
-    dataDate.value = await loadDataDateForLayer(code, defaultLayer);
+    dataDate.value = await loadDataDateForLayer(resolvedDataCode, defaultLayer);
     if (!isCurrent()) return;
 
     bounds.value = pmtilesBounds;
@@ -662,7 +675,7 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
 
   let getValue: (indicator: string, i: number) => { avg: number; qualityClass: number | null; description: string; hasData: boolean; countryLevelHasData: boolean };
   if (panel.selectedGeomId) {
-    const regionUrl = buildUrls(selectedCountry.value, panel.mapLayer).parquetUrl;
+    const regionUrl = buildUrls(dataCode.value, panel.mapLayer).parquetUrl;
     const regionValues = await loadRegionIndicatorValues(regionUrl, topicName, panel.selectedGeomId, allIndicators);
     getValue = (indicator) => ({
       avg: regionValues[indicator]?.value ?? 0,
@@ -675,7 +688,7 @@ async function loadIndicatorCards(panelIdx: number, topicName: string) {
       countryLevelHasData: true
     });
   } else {
-    const layerUrl = buildUrls(selectedCountry.value, panel.mapLayer).parquetUrl;
+    const layerUrl = buildUrls(dataCode.value, panel.mapLayer).parquetUrl;
     // The displayed average/description are deliberately always the
     // country-level figure (see getHeroBandDisplayValue) - but whether an
     // indicator is disabled has to reflect the layer actually on screen,
@@ -824,14 +837,14 @@ async function loadActiveMapLookup(panelIdx: number, topicName: string) {
       panel.mapLookup = {};
       return;
     }
-    const urls = buildUrls(selectedCountry.value, panel.mapLayer);
+    const urls = buildUrls(dataCode.value, panel.mapLayer);
     const lookup = await loadFeatureCountLookup(urls.tagDistributionUrl, topicName, groupingKey);
     panel.mapValueLookup = lookup;
     panel.mapLookup = lookup;
     return;
   }
 
-  const urls = buildUrls(selectedCountry.value, panel.mapLayer);
+  const urls = buildUrls(dataCode.value, panel.mapLayer);
   const [result] = await loadIndicatorLookups(urls.parquetUrl, topicName, [card.indicator]);
   if (!result) return;
 
@@ -875,7 +888,7 @@ async function loadActiveIndicatorPlot(panelIdx: number) {
   // country-level file this component otherwise uses only ever has the one
   // whole-country row), keyed by the same geomID the map colors it with.
   const plotUrl = panel.selectedGeomId
-    ? buildUrls(selectedCountry.value, panel.mapLayer).parquetUrl
+    ? buildUrls(dataCode.value, panel.mapLayer).parquetUrl
     : parquetUrl.value;
 
   try {
@@ -970,7 +983,7 @@ async function handleMapLayerChange(panelIdx: number, layer: string) {
   panel.selectedGeomId = null;
   panel.selectedRegionName = null;
   const dataDatePromise = selectedCountry.value
-    ? loadDataDateForLayer(selectedCountry.value, layer)
+    ? loadDataDateForLayer(dataCode.value, layer)
     : Promise.resolve('');
   const [newDataDate] = await Promise.all([
     dataDatePromise,
@@ -1072,8 +1085,8 @@ async function loadPanelTreemap(panelIdx: number) {
 
   const geomId = panel.selectedGeomId;
   const urls = geomId
-    ? buildUrls(selectedCountry.value, panel.mapLayer)
-    : buildUrls(selectedCountry.value, currentLayers.value.countryLevel);
+    ? buildUrls(dataCode.value, panel.mapLayer)
+    : buildUrls(dataCode.value, currentLayers.value.countryLevel);
   const treemapId = `tag-treemap-${panel.id}`;
 
   try {
@@ -1182,8 +1195,20 @@ function handlePanelSchoolSwitch(panelIdx: number, subTopic: string) {
   loadPanelTreemap(panelIdx);
 }
 
-watch(locale, () => {
-  if (selectedCountry.value && !isLoading.value) loadPanelTopicData(0);
+watch(locale, async (newLocale) => {
+  const code = selectedCountry.value;
+  if (!code || isLoading.value) return;
+  // Some countries have a separate localized data set (e.g. DEU_DE) - switch
+  // to it, keeping topic/layer/selected region. Otherwise only the
+  // load-time-formatted values need refreshing.
+  const nextDataCode = await resolveDataCode(code, newLocale);
+  if (code !== selectedCountry.value || newLocale !== locale.value) return;
+  if (nextDataCode !== dataCode.value) {
+    clearParquetCache();
+    await loadCountry(code, false);
+  } else {
+    loadPanelTopicData(0);
+  }
 });
 
 function handleLocaleChange(newLocale: string) {

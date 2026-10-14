@@ -182,12 +182,26 @@ export interface BuildUrlsResult {
   tagDistributionUrl: string;
 }
 
-/** URLs for one (country, layer) pair - the pmtiles file is shared across all layers of a country. */
-export function buildUrls(code: string, layer: string): BuildUrlsResult {
+/**
+ * Candidate data code for a country in a given UI language: German data lives
+ * in a parallel "<CODE>_DE/<CODE>_DE_*" set. Whether that set actually exists
+ * is checked by resolveDataCode() in dataService.ts, which falls back to the
+ * plain (English) code.
+ */
+export function localizedDataCode(code: string, locale: string): string {
+  return locale === 'de' ? `${code}_DE` : code;
+}
+
+/**
+ * URLs for one (data code, layer) pair - the pmtiles file is shared across all
+ * layers of a country. Takes the data code (e.g. "DEU" or "DEU_DE", see
+ * resolveDataCode), not the plain country code used by getCountryLayers().
+ */
+export function buildUrls(dataCode: string, layer: string): BuildUrlsResult {
   return {
-    pmtilesUrl: `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${code}/${code}_boundaries.pmtiles`,
-    parquetUrl: `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${code}/${code}_${layer}_long.parquet`,
-    tagDistributionUrl: `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${code}/${code}_${layer}_tag_distribution.parquet`
+    pmtilesUrl: `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${dataCode}/${dataCode}_boundaries.pmtiles`,
+    parquetUrl: `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${dataCode}/${dataCode}_${layer}_long.parquet`,
+    tagDistributionUrl: `https://hot.storage.heigit.org/heigit-hdx-public/ohsome-quality-country-reports/${dataCode}/${dataCode}_${layer}_tag_distribution.parquet`
   };
 }
 
