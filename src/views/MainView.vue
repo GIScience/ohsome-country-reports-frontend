@@ -944,7 +944,12 @@ async function loadActiveIndicatorPlot(panelIdx: number) {
     fig.layout.plot_bgcolor = 'rgba(0,0,0,0)';
     fig.layout.margin = { t: 25, r: 10, l: 10, b: 10 };
 
-    const axisKeys = Object.keys(fig.layout).filter((key) => /^[xy]axis\d*$/.test(key));
+    // xaxis/yaxis always included: a figure that doesn't configure an axis
+    // (e.g. land-cover-thematic-accuracy's horizontal bars have no yaxis
+    // key) would otherwise keep the fixed 10px margin above and get its
+    // long category labels cut off on the left.
+    const axisKeys = [...new Set(['xaxis', 'yaxis', ...Object.keys(fig.layout)])]
+      .filter((key) => /^[xy]axis\d*$/.test(key));
     axisKeys.forEach((key) => {
       fig.layout[key] = { ...fig.layout[key], automargin: true };
     });
