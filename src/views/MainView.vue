@@ -1921,11 +1921,20 @@ onUnmounted(() => {
 }
 
 .embed-mode :deep(.footer-btn) {
-  padding: 0.25rem 0.4rem !important;
+  height: 1.5rem;
+  padding: 0 0.4rem !important;
   font-size: 0.65rem !important;
 }
 
 .embed-mode :deep(.footer-right) {
   font-size: 0.65rem !important;
+}
+
+.embed-mode :deep(.heigit-logo) {
+  height: 1.6rem;
+}
+
+.embed-mode :deep(.footer-divider) {
+  height: 1.1rem;
 }
 </style>
