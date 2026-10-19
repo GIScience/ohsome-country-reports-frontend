@@ -12,6 +12,18 @@ dist
 dist-ssr
 *.local
 
+# TypeScript build info
+*.tsbuildinfo
+
+# Transpiled Vite config
+vite.config.js
+vite.config.d.ts
+
+# Environment files
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
