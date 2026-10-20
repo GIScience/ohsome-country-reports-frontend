@@ -1343,7 +1343,7 @@ function resetPlotHeight() {
 // variants map to their base indicator - the dashboard has no URL parameter
 // for the attribute. Built ahead of time (geometry read from the boundaries
 // pmtiles, see regionGeometry.ts) so the button can be a plain link.
-const OHSOME_DASHBOARD_URL = 'https://dashboard.ohsome.org';
+const OHSOME_DASHBOARD_URL = 'https://ohsome-dashboard.heigit.org';
 const dashboardLink = ref<string | null>(null);
 let dashboardLinkGeneration = 0;
 

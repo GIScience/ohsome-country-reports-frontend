@@ -13,7 +13,7 @@ import ohsomeLogo from '../assets/images/ohsome-narrow.svg';
 
     <div class="footer-center">
       <a
-        href="https://dashboard.ohsome.org/en/#backend=ohsomeApi&groupBy=none&time=%2F2026-01-02T11%3A00Z%2FP1M&key=natural&value=tree&types=node&measure=count"
+        href="https://ohsome-dashboard.heigit.org/en/#backend=ohsomeApi&groupBy=none&time=%2F2026-01-02T11%3A00Z%2FP1M&key=natural&value=tree&types=node&measure=count"
         target="_blank"
         class="ohsome-link"
       >
