@@ -21,7 +21,7 @@ import {
   resolveDataCode,
   type PMTilesBounds
 } from '../services/dataService';
-import { clearParquetCache } from '../utils/duckdb';
+import { clearParquetCache } from '../utils/parquet';
 import { loadRegionGeometry } from '../services/regionGeometry';
 import {
   topicConfig,

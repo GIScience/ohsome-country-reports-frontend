@@ -1,4 +1,4 @@
-import { initDuckDB, registerParquetFile, runQuery } from "../utils/duckdb";
+import { loadParquetRows } from "../utils/parquet";
 import { PMTiles } from "pmtiles";
 import { CANDIDATE_COUNTRIES } from "../config/countries";
 import { buildUrls, getCountryLayers, localizedDataCode } from "../utils/helpers";
@@ -116,23 +116,17 @@ export async function fetchAvailableCountries(): Promise<Country[]> {
   return countries;
 }
 
-function toArray(result: any): any[] {
-  if (Array.isArray(result)) return result;
-  if (typeof result.toArray === 'function') return result.toArray();
-  if (typeof result.map === 'function') return result.map((x: any) => x);
-  return [];
+/** Sorted distinct non-empty values, like SQL's SELECT DISTINCT ... ORDER BY. */
+function distinctSorted(values: unknown[]): string[] {
+  return [...new Set(values.filter(Boolean).map(String))].sort();
 }
 
 export async function loadAvailableTopics(parquetUrl: string): Promise<string[]> {
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(parquetUrl, db);
+    const rows = await loadParquetRows(parquetUrl);
+    if (rows.length === 0) return [];
 
-    const schema = await runQuery(conn,`DESCRIBE SELECT * FROM read_parquet('${tableName}')`);
-    const schemaArray = toArray(schema);
-    const cols = schemaArray.map((r: any) => r.column_name);
-
+    const cols = Object.keys(rows[0]);
     const topicCol = cols.includes("topic")
       ? "topic"
       : cols.includes("topic_name")
@@ -141,14 +135,7 @@ export async function loadAvailableTopics(parquetUrl: string): Promise<string[]>
 
     if (!topicCol) return [];
 
-    const result = await runQuery(conn,`
-      SELECT DISTINCT ${topicCol} AS topic
-      FROM read_parquet('${tableName}')
-      ORDER BY ${topicCol}
-    `);
-
-    const resultArray = toArray(result);
-    return resultArray.map((r: any) => r.topic).filter(Boolean);
+    return distinctSorted(rows.map(r => r[topicCol]));
   } catch (e) {
     console.error("Failed to load topics:", e);
     return [];
@@ -156,15 +143,11 @@ export async function loadAvailableTopics(parquetUrl: string): Promise<string[]>
 }
 
 export async function loadIndicators(parquetUrl: string, topicName: string): Promise<string[]> {
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(parquetUrl, db);
+    const rows = await loadParquetRows(parquetUrl);
+    if (rows.length === 0) return [];
 
-    const schema = await runQuery(conn,`DESCRIBE SELECT * FROM read_parquet('${tableName}')`);
-    const schemaArray = toArray(schema);
-    const cols = schemaArray.map((r: any) => r.column_name);
-
+    const cols = Object.keys(rows[0]);
     const topicCol = cols.includes("topic")
       ? "topic"
       : cols.includes("topic_name")
@@ -182,21 +165,12 @@ export async function loadIndicators(parquetUrl: string, topicName: string): Pro
       return [];
     }
 
-    const topics = [topicName];
-
-    const topicFilter = topics
-      .map((t) => `lower(trim(${topicCol})) = '${t.toLowerCase()}'`)
-      .join(" OR ");
-
-    const result = await runQuery(conn,`
-      SELECT DISTINCT ${indicatorCol} AS indicator
-      FROM read_parquet('${tableName}')
-      WHERE ${topicFilter}
-      ORDER BY ${indicatorCol}
-    `);
-
-    const resultArray = toArray(result);
-    return resultArray.map((r: any) => r.indicator).filter(Boolean);
+    const topic = topicName.toLowerCase();
+    return distinctSorted(
+      rows
+        .filter(r => typeof r[topicCol] === "string" && r[topicCol].trim().toLowerCase() === topic)
+        .map(r => r[indicatorCol])
+    );
   } catch (e) {
     console.error("Failed to load indicators:", e);
     return [];
@@ -252,21 +226,13 @@ export async function loadRegionIndicatorValues(
 ): Promise<Record<string, RegionIndicatorValue>> {
   if (indicatorNames.length === 0) return {};
 
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(parquetUrl, db);
-    const indicatorFilter = indicatorNames.map(n => `'${n}'`).join(", ");
+    const rows = await loadParquetRows(parquetUrl);
+    const wanted = new Set(indicatorNames);
 
-    const result = await runQuery(conn, `
-      SELECT indicator, value, quality_class, description
-      FROM read_parquet('${tableName}')
-      WHERE topic = '${topic}' AND geomID = '${geomId}' AND indicator IN (${indicatorFilter})
-    `);
-
-    const resultArray = toArray(result);
     const out: Record<string, RegionIndicatorValue> = {};
-    resultArray.forEach((r: any) => {
+    rows.forEach(r => {
+      if (r.topic !== topic || r.geomID !== geomId || !wanted.has(r.indicator)) return;
       out[String(r.indicator)] = {
         value: isNoDataValue(r.value) ? 0 : Number(r.value),
         qualityClass: isNoDataValue(r.quality_class) ? null : Number(r.quality_class),
@@ -288,29 +254,16 @@ export async function loadIndicatorLookups(
 ): Promise<IndicatorLookup[]> {
   if (indicatorNames.length === 0) return [];
 
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(parquetUrl, db);
-
-    const topicFilter = `topic = '${topicName}'`;
-    const indicatorFilter = indicatorNames.map(n => `'${n}'`).join(", ");
-
-    const result = await runQuery(conn,`
-      SELECT indicator, geomID, value, quality_class, description
-      FROM read_parquet('${tableName}')
-      WHERE ${topicFilter}
-        AND indicator IN (${indicatorFilter})
-    `);
-
-    const resultArray = toArray(result);
+    const rows = await loadParquetRows(parquetUrl);
 
     const groups: Record<string, { sum: number; count: number; qcSum: number; qcCount: number; description: string; lookup: Record<string, number>; qualityClassLookup: Record<string, number> }> = {};
     for (const name of indicatorNames) {
       groups[name] = { sum: 0, count: 0, qcSum: 0, qcCount: 0, description: "", lookup: {}, qualityClassLookup: {} };
     }
 
-    resultArray.forEach((r: any) => {
+    rows.forEach(r => {
+      if (r.topic !== topicName) return;
       const indicator = String(r.indicator);
       if (!groups[indicator]) return;
 
@@ -386,32 +339,22 @@ export interface PMTilesBounds {
 
 /**
  * The tag-distribution parquet carries an ISO-8601 `timestamp` column (a
- * varchar, one value per pipeline run recorded in that file) - MAX() sorts
- * correctly on it as-is since ISO-8601 strings compare lexicographically in
+ * string, one value per pipeline run recorded in that file) - the largest
+ * string is the latest, since ISO-8601 strings compare lexicographically in
  * chronological order. This is the actual "when was this data computed"
  * moment, unlike the object storage's HTTP Last-Modified header (which only
  * reflects when the file was last uploaded/copied, not a same thing).
  */
 export async function loadLatestTimestamp(tagDistributionUrl: string): Promise<string | null> {
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(tagDistributionUrl, db);
-    // Deliberately not MAX(timestamp): this duckdb-wasm build silently
-    // truncates a MAX()/MIN() aggregate over a VARCHAR column (confirmed -
-    // it returned "2026-09-" instead of the real "2026-09-11T13:13:51Z",
-    // exactly the kind of corruption an aggregate copying only a DuckDB
-    // string_t's inline prefix, not the full out-of-line data, would
-    // produce). A plain row projection isn't an aggregate and reads
-    // correctly, same as every other varchar column this app already reads.
-    const result = await runQuery(conn, `
-      SELECT timestamp AS latest
-      FROM read_parquet('${tableName}')
-      ORDER BY timestamp DESC
-      LIMIT 1
-    `);
-    const resultArray = toArray(result);
-    return resultArray[0]?.latest ?? null;
+    const rows = await loadParquetRows(tagDistributionUrl);
+    let latest: string | null = null;
+    for (const r of rows) {
+      if (typeof r.timestamp === "string" && (latest === null || r.timestamp > latest)) {
+        latest = r.timestamp;
+      }
+    }
+    return latest;
   } catch (e) {
     console.error("Failed to load latest timestamp:", e);
     return null;
@@ -438,22 +381,12 @@ export interface TagCoverageItem {
 }
 
 export async function loadTagCoverage(parquetUrl: string): Promise<TagCoverageItem[]> {
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(parquetUrl, db);
-
-    const query = `
-      SELECT indicator, value
-      FROM read_parquet('${tableName}')
-      WHERE indicator LIKE 'attribute-completeness_%'
-    `;
-
-    const result = await runQuery(conn,query);
-    const resultArray = toArray(result);
+    const rows = await loadParquetRows(parquetUrl);
 
     const lookup: Record<string, number> = {};
-    resultArray.forEach((r: any) => {
+    rows.forEach(r => {
+      if (typeof r.indicator !== "string" || !r.indicator.startsWith("attribute-completeness_")) return;
       lookup[r.indicator] = Number(r.value) || 0;
     });
 
@@ -549,22 +482,13 @@ export async function loadTagDistribution(
   // loadIndicatorFigure's geomId.
   geomId?: string | null
 ): Promise<Record<string, TagDistributionMeasure>> {
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(parquetUrl, db);
-    const geomFilter = geomId ? ` AND geomID = '${geomId}'` : '';
-
-    const result = await runQuery(conn,`
-      SELECT measure, treemap, sum_value
-      FROM read_parquet('${tableName}')
-      WHERE topic = '${topic}' AND grouping_key = '${groupingKey}'${geomFilter}
-    `);
-
-    const resultArray = toArray(result);
+    const rows = await loadParquetRows(parquetUrl);
     const byMeasure: Record<string, TagDistributionMeasure> = {};
 
-    resultArray.forEach((r: any) => {
+    rows.forEach(r => {
+      if (r.topic !== topic || r.grouping_key !== groupingKey) return;
+      if (geomId && r.geomID !== geomId) return;
       let treemap: any = null;
       if (r.treemap) {
         try {
@@ -600,21 +524,12 @@ export async function loadFeatureCountLookup(
   topic: string,
   groupingKey: string
 ): Promise<Record<string, number>> {
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(parquetUrl, db);
-
-    const result = await runQuery(conn, `
-      SELECT geomID, sum_value
-      FROM read_parquet('${tableName}')
-      WHERE topic = '${topic}' AND grouping_key = '${groupingKey}' AND measure = 'count'
-    `);
-
-    const resultArray = toArray(result);
+    const rows = await loadParquetRows(parquetUrl);
     const lookup: Record<string, number> = {};
 
-    resultArray.forEach((r: any) => {
+    rows.forEach(r => {
+      if (r.topic !== topic || r.grouping_key !== groupingKey || r.measure !== "count") return;
       if (isNoDataValue(r.sum_value)) return;
       const value = Number(r.sum_value);
       if (isNaN(value)) return;
@@ -652,24 +567,16 @@ export async function loadIndicatorFigure(
   // only ever has the one country-wide row).
   geomId?: string | null
 ): Promise<any | null> {
-  const { db, conn } = await initDuckDB();
-
   try {
-    const tableName = await registerParquetFile(parquetUrl, db);
-    const geomFilter = geomId ? ` AND geomID = '${geomId}'` : '';
-
-    const result = await runQuery(conn,`
-      SELECT figure
-      FROM read_parquet('${tableName}')
-      WHERE topic = '${topic}' AND indicator = '${indicator}' AND figure IS NOT NULL${geomFilter}
-      LIMIT 1
-    `);
-
-    const resultArray = toArray(result);
-    if (resultArray.length === 0 || !resultArray[0].figure) return null;
+    const rows = await loadParquetRows(parquetUrl);
+    const row = rows.find(r =>
+      r.topic === topic && r.indicator === indicator && r.figure != null &&
+      (!geomId || r.geomID === geomId)
+    );
+    if (!row?.figure) return null;
 
     try {
-      return JSON.parse(resultArray[0].figure);
+      return JSON.parse(row.figure);
     } catch {
       return null;
     }

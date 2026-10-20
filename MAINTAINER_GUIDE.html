@@ -336,8 +336,8 @@
           <code>hot.storage.heigit.org</code> and parsed in the browser, either as a vector tile
           for the map or as a small analytical database file for everything else. That one fact,
           that this is a fully static site whose "backend" is a pile of files on S3, explains
-          most of the unusual choices in this codebase. Most notably: an in-browser SQL engine
-          (DuckDB-WASM) standing in for a normal REST API.
+          most of the unusual choices in this codebase. Most notably: parquet files
+          decoded in the browser (with hyparquet) standing in for a normal REST API.
         </p>
         <div class="callout info">
           <div class="callout-label">The one-sentence mental model</div>
@@ -472,7 +472,7 @@ oqapi-country-reports-vue/
     ├── services/
     │   └── dataService.ts<span class="c">        every function that fetches or queries remote data</span>
     └── utils/
-        ├── duckdb.ts<span class="c">              the DuckDB-WASM engine: init, queueing, parquet registration</span>
+        ├── parquet.ts<span class="c">             parquet download + decode (hyparquet), cached per URL</span>
         └── helpers.ts<span class="c">             topic/label formatting, per-country layer config, URL builder</span>
         </div>
         <p>
@@ -583,16 +583,16 @@ npm run dev
             there's no <code>window.pmtiles</code> global left to declare or depend on.
           </p>
           <p>
-            Two genuine third-party network dependencies remain, though, and there's no plan to
-            remove either: DuckDB-WASM's own engine bundle, fetched from a jsDelivr CDN at
-            runtime (§7), and the map's basemap style/tiles/glyphs, served from VersaTiles'
-            public tile server at <code>tiles.versatiles.org</code> (generated in-process by the
+            One genuine third-party network dependency remains: the map's basemap
+            style/tiles/glyphs, served from VersaTiles' public tile server at
+            <code>tiles.versatiles.org</code> (generated in-process by the
             <code>@versatiles/style</code> npm package, see <a href="#components">§10</a>'s
-            <code>MetricMap.vue</code> entry). Both were deliberate choices, not oversights: a
-            WASM SQL engine and a full basemap vector tileset aren't things this project bundles
-            or self-hosts. The basemap specifically was chosen to match the same VersaTiles style
-            HeiGIT already uses in its Climate Action Navigator and Hazard-Risk-Composer tools,
-            not picked at random. If you're adding a new external asset, font, icon set, script,
+            <code>MetricMap.vue</code> entry). The basemap was chosen to match the same VersaTiles
+            style HeiGIT already uses in its Climate Action Navigator and Hazard-Risk-Composer
+            tools. Parquet files, on the other hand, are decoded by hyparquet, a pure-JS library
+            bundled through npm (§7); it replaced DuckDB-WASM, whose engine came from a jsDelivr
+            CDN and whose <code>parquet</code> extension was auto-loaded from
+            <code>extensions.duckdb.org</code>. If you're adding a new external asset, font, icon set, script,
             still think twice before reaching for a CDN link for anything that <em>can</em> be
             self-hosted or bundled through npm; that's the pattern this codebase otherwise
             follows.
@@ -731,55 +731,29 @@ isEmbed.value = inIframe || hasEmbedParam || hasIframe2ColParam;</code></pre>
           re-fetching or re-parsing the tiles.
         </p>
 
-        <h3>Parquet + DuckDB-WASM: everything else</h3>
+        <h3>Parquet + hyparquet: everything else</h3>
         <p>
           This is the part that looks unfamiliar if you've mostly built apps that call a REST
           API. There is no API here. Instead:
         </p>
         <ol class="steps">
-          <li><strong>DuckDB-WASM boots once.</strong> <code>initDuckDB()</code> in <span class="filechip">src/utils/duckdb.ts</span> downloads DuckDB's own WebAssembly engine, from a jsDelivr CDN bundle, spins it up in a Web Worker, and opens one connection. It's memoized as a module-level singleton with retry-on-failure, so every part of the app shares the same running database engine.</li>
-          <li><strong>A parquet file gets fetched and registered.</strong> <code>registerParquetFile(url, db)</code> downloads the raw bytes with <code>fetch()</code> and hands them to DuckDB as an in-memory virtual file (<code>data_&lt;n&gt;.parquet</code>). Registered files stay cached by URL for the rest of the session (<code>parquetFileCache</code>), and two concurrent requests for the same URL share one in-flight fetch (<code>pendingRegistrations</code>) instead of racing each other.</li>
-          <li><strong>A plain SQL query runs against it.</strong> Every function in <span class="filechip">dataService.ts</span>, <code>loadIndicators</code>, <code>loadIndicatorLookups</code>, <code>loadTagDistribution</code>, and the rest, is a small <code>SELECT ... FROM read_parquet('...')</code> string, run through <code>runQuery(conn, sql)</code>.</li>
-          <li><strong>Results feed Vue state and MapLibre or Plotly directly.</strong> There's no normalization layer and no store in between. The query result gets shaped into exactly what the template or a chart library needs, right there in the calling function.</li>
+          <li><strong>A parquet file gets fetched and decoded.</strong> <code>loadParquetRows(url)</code> in <span class="filechip">src/utils/parquet.ts</span> downloads the whole file with <code>fetch()</code> and decodes every row with <a href="https://github.com/hyparam/hyparquet">hyparquet</a>, a dependency-free pure-JS parquet reader that's bundled into the app (no CDN, no WebAssembly). INT64 columns (<code>quality_class</code>, <code>sum_value</code>) come back from hyparquet as <code>BigInt</code> and are converted to plain numbers right there. The decoded rows stay cached by URL for the rest of the session (cleared on a country change via <code>clearParquetCache()</code>), and two concurrent requests for the same URL share one in-flight download. A failed download isn't cached, so the next call retries.</li>
+          <li><strong>Plain JS filters run against the rows.</strong> Every function in <span class="filechip">dataService.ts</span>, <code>loadIndicators</code>, <code>loadIndicatorLookups</code>, <code>loadTagDistribution</code>, and the rest, filters that row array in plain JavaScript (<code>filter</code>, <code>find</code>, a <code>Set</code> for distinct values). The queries are all simple (filter, distinct, sort, first match), so no SQL engine is needed.</li>
+          <li><strong>Results feed Vue state and MapLibre or Plotly directly.</strong> There's no normalization layer and no store in between. The result gets shaped into exactly what the template or a chart library needs, right there in the calling function.</li>
         </ol>
-        <div class="callout danger">
-          <div class="callout-label">DuckDB-WASM's one hard rule: never run two queries at once</div>
+        <div class="callout info">
+          <div class="callout-label">Why not DuckDB-WASM anymore</div>
           <p>
-            I confirmed this the hard way during development: dispatching two
-            <code>conn.query()</code> calls at the same time against DuckDB-WASM's single shared
-            connection corrupts both. You'll see errors like <code>"No magic bytes found"</code>
-            on a file that's completely fine on its own. <code>runQuery()</code> in
-            <span class="filechip">duckdb.ts</span> exists specifically to prevent this: every
-            query, from anywhere in the app, funnels through one <code>enqueue()</code> promise
-            chain that runs strictly one operation at a time. If you ever add a new
-            data-loading function, call the query through <code>runQuery()</code>, never
-            <code>conn.query()</code> directly, or you'll reintroduce this bug the moment two
-            things load at once, which happens routinely: switching topic triggers several
-            data-loading functions in parallel via <code>Promise.all</code>.
-          </p>
-        </div>
-
-        <div class="callout danger">
-          <div class="callout-label"><code>MAX()</code>/<code>MIN()</code> over a VARCHAR column silently truncates in this DuckDB-WASM build</div>
-          <p>
-            Confirmed directly: <code>SELECT MAX(timestamp) FROM read_parquet(...)</code>
-            against a column of full ISO-8601 strings like
-            <code>"2026-09-11T13:13:51Z"</code> came back as the string
-            <code>"2026-09-"</code>, eight characters, every time. Not an error, no exception,
-            just quietly wrong data that happened to still parse as a (wrong) date. This looks
-            like DuckDB's internal <code>string_t</code> layout (a short inline buffer for
-            strings, a pointer to heap-allocated bytes for longer ones) not getting fully copied
-            when an aggregate result crosses back over the WASM/JS boundary. A plain row
-            projection of the same column, no aggregate function involved, reads correctly, the
-            same as every other <code>varchar</code> field this app already reads. The fix, and
-            the pattern to follow for anything similar: replace
-            <code>SELECT MAX(col) FROM ...</code> with
-            <code>SELECT col FROM ... ORDER BY col DESC LIMIT 1</code>.
-            <code>loadLatestTimestamp()</code> in <span class="filechip">dataService.ts</span> is
-            the concrete example. Don't reach for <code>MAX()</code>/<code>MIN()</code> on a
-            <code>varchar</code> column in this codebase again without testing the raw string
-            length of what comes back; a numeric column was not tested and may or may not share
-            this bug.
+            This app used DuckDB-WASM until October 2026. It was replaced because it made every
+            visitor's browser contact two third parties (the engine from jsDelivr, about 38 MB,
+            and its <code>parquet</code> extension from <code>extensions.duckdb.org</code>), and
+            because it needed workarounds: a single query queue against "No magic bytes found"
+            corruption under concurrent queries, and avoiding <code>MAX()</code>/<code>MIN()</code>
+            on <code>varchar</code> columns, which silently truncated the result. Before the
+            switch, the new JS functions were compared against the old SQL on real DEU and AFG
+            files (714 calls, identical output). Decoding the largest file
+            (<code>DEU_vg1000_krs_long.parquet</code>, 28 MB) takes roughly 0.4 s on the main
+            thread, once per file and session.
           </p>
         </div>
 
@@ -1366,13 +1340,11 @@ jobs:
           <li>Country list needs manual maintenance. Adding a country means editing <code>CANDIDATE_COUNTRIES</code> by hand, because the S3 <code>ListBucket</code> permission this could otherwise be automated with is still blocked. §2.</li>
           <li>No automated tests of any kind. Type-checking (<code>vue-tsc</code>) is the only automated gate; manual browser verification is mandatory for every change.</li>
           <li>No ESLint or Prettier configuration. Code style is whatever the existing file already looks like. Match it by hand.</li>
-          <li><code>MAX()</code>/<code>MIN()</code> over a <code>varchar</code> column silently truncates in the current DuckDB-WASM build. Confirmed directly, cost real debugging time before the root cause was found. Use <code>ORDER BY ... LIMIT 1</code> instead. §7.</li>
           <li>Several design tokens in <code>main.css</code> are now fully dead (<code>--font-sans</code>, <code>--color-bg</code>, <code>--color-card-bg</code>, <code>--color-text</code>, <code>--border-radius</code>, <code>--font-size-text</code>), left over from the removed iframe-2col layout. Safe to delete, just grep first. §11.</li>
           <li><code>loadTagCoverage()</code> in <code>dataService.ts</code> is exported but has zero call sites, left over from a removed attribute-completeness bar chart. Safe to delete. §7, §10.</li>
           <li><code>MainView.vue</code> is a single file, around 1,400 lines. There's no enforced component boundary between sidebar controls, the hero band, indicator picking, the region drill-down, and so on. If this file keeps growing, pulling some of that out into dedicated components, the way <code>MetricMap.vue</code> and the two indicator card components already are, is a reasonable next step. It's noticeably smaller than it used to be (it briefly exceeded 2,800 lines before the Split View and iframe-2col removal), so this is less urgent than it once was.</li>
           <li>Tailwind is installed but mostly dead weight. §11. Not harmful, just don't expect to find conventions for using it.</li>
-          <li>Every parquet file is fetched as a whole file into memory (<code>registerParquetFile()</code>, §7) rather than queried in place over HTTP range requests, even when a query only touches one topic/indicator. Worth investigating whether DuckDB-WASM's native remote-parquet reading could cut bytes transferred for the larger grid-layer files, once <code>hot.storage.heigit.org</code>'s range-request/CORS support is confirmed. Not started.</li>
-          <li>Every DuckDB-WASM query, across every card/plot/treemap, is serialized through one shared connection and one operation queue (<code>enqueue()</code> in <code>duckdb.ts</code>, §7) - safe (this is what fixes the "No magic bytes found" corruption), but means queries never actually run concurrently even when they're unrelated. Opening a second connection for independent query sets might allow real parallelism, but needs a deliberate concurrency-safety test first, not just a config flip. Not started.</li>
+          <li>Every parquet file is fetched as a whole file into memory (<code>loadParquetRows()</code>, §7), even when a function only needs a few columns. <code>hot.storage.heigit.org</code> supports HTTP range requests with CORS, so hyparquet's <code>asyncBufferFromUrl()</code> plus a <code>columns</code> list could skip the large <code>figure</code>/<code>treemap</code> columns for map lookups. Untested in a browser (the <code>Range</code> header may trigger a CORS preflight). Not started.</li>
         </ul>
       </section>
 
@@ -1384,8 +1356,7 @@ jobs:
           <dt>Layer / grid layer</dt><dd>The geographic granularity a map currently shows: a whole country (<code>adm0</code>), a state or region (<code>adm1</code>), or a hexagonal grid (<code>h3</code>). Chosen per panel through the "Layer" pill row.</dd>
           <dt>Grouping key / grouping tag</dt><dd>The OSM tag a topic's "Tag distribution" treemap breaks down by: <code>highway</code> for roads, <code>building</code> for buildings, <code>operator:type</code> for schools/hospitals by default.</dd>
           <dt>PMTiles</dt><dd>A single-file vector-tile format that supports HTTP range requests, so a map can be served from one static file with no tile server. See §7.</dd>
-          <dt>Parquet</dt><dd>A compact, columnar binary file format for tabular data. This app treats every parquet file as a small queryable database through DuckDB-WASM, instead of parsing it into JSON up front.</dd>
-          <dt>DuckDB-WASM</dt><dd>A full SQL database engine compiled to WebAssembly, running entirely in the visitor's browser inside a Web Worker. It lets this app run real SQL queries against remote parquet files with no server-side query API. See §7.</dd>
+          <dt>Parquet</dt><dd>A compact, columnar binary file format for tabular data. This app downloads each parquet file once, decodes it into rows with hyparquet, and filters those rows in JS. See §7.</dd>
           <dt>ohsome-quality-api / ohsome-api</dt><dd>HeiGIT's separate backend services, not part of this repository, that the Dagster pipeline calls to actually compute quality indicators from OpenStreetMap history data. This app only ever reads their pre-computed output files from S3.</dd>
           <dt>Panel</dt><dd>The one active map/topic/indicator combination, modeled as a single-element array of <code>ViewPanel</code> (a shape left over from a removed two-panel Split View, see §8), exposed to the template as <code>mainPanel</code>.</dd>
           <dt>Embed mode</dt><dd>A compact CSS styling mode (<code>.embed-mode</code>, <code>isEmbed</code>), applied to the same single layout when the page is embedded in an <code>&lt;iframe&gt;</code> or loaded with <code>?embed</code>/<code>?iframe-2col</code>. Used to be a structurally different template; no longer is. See §6.</dd>

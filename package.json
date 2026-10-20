@@ -14,11 +14,11 @@
     "i18n:report": "vue-i18n-extract report --vueFiles './src/**/*.?(ts|vue)' --languageFiles './src/locales/*.json'"
   },
   "dependencies": {
-    "@duckdb/duckdb-wasm": "^1.33.1-dev20.0",
     "@mapbox/vector-tile": "^3.0.0",
     "@turf/helpers": "^7.4.0",
     "@turf/union": "^7.4.0",
     "@versatiles/style": "^5.13.1",
+    "hyparquet": "^1.31.5",
     "js-yaml": "^4.1.1",
     "maplibre-gl": "^5.24.0",
     "pbf": "^5.1.2",
