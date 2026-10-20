@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import heigitLogo from '../assets/images/heigit-logo.svg';
+import ohsomeLogo from '../assets/images/ohsome-narrow.svg';
 </script>
 
 <template>
@@ -16,7 +17,7 @@ import heigitLogo from '../assets/images/heigit-logo.svg';
         target="_blank"
         class="ohsome-link"
       >
-        <img src="https://dashboard.ohsome.org/en/assets/images/ohsome_narrow.svg" alt="ohsome">
+        <img :src="ohsomeLogo" alt="ohsome">
         <span class="ohsome-text">DASHBOARD</span>
       </a>
     </div>
