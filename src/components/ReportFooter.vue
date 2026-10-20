@@ -6,7 +6,7 @@ import ohsomeLogo from '../assets/images/ohsome-narrow.svg';
 <template>
   <footer class="footer">
     <div class="footer-left">
-      <a class="footer-btn" href="https://heigit.org/contact/" target="_blank">{{ $t('footer.contact') }}</a>
+      <a class="footer-btn" href="mailto:ohsome@heigit.org">{{ $t('footer.contact') }}</a>
       <a class="footer-btn" href="https://heigit.org/privacy-policy/" target="_blank">{{ $t('footer.privacy') }}</a>
       <a class="footer-btn" href="https://heigit.org/imprint/" target="_blank">{{ $t('footer.imprint') }}</a>
     </div>
