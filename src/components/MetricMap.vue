@@ -2,18 +2,29 @@
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import maplibregl from "maplibre-gl";
 import { Protocol } from "pmtiles";
-import { colorful } from "@versatiles/style";
 import type { StyleSpecification } from "maplibre-gl";
 import { indicatorLabel } from '../utils/helpers';
 import { formatNumber, formatPercent } from '../i18n';
 
-// Same basemap as HeiGIT's Hazard-Risk-Composer and Climate Action Navigator
-// (climate-action.heigit.org): a VersaTiles-hosted OSM vector style, tiles/
-// glyphs/sprites all served from tiles.versatiles.org. Generated in-process
-// by the @versatiles/style package rather than fetched as a style JSON.
-// Replaces the previous OpenFreeMap style (tiles.openfreemap.org) - this
-// app has no other third-party tile dependency left after this change.
-const BASEMAP_STYLE = colorful({ baseUrl: "https://tiles.versatiles.org" }) as StyleSpecification;
+// OSM Carto raster tiles from HeiGIT's own MapProxy (maps.heigit.org), so the
+// browser fetches basemap tiles from HeiGIT instead of a third-party tile
+// server (this replaced VersaTiles' tiles.versatiles.org). Raster only: the
+// map adds no symbol layers, so no glyphs or sprites are needed. The
+// "@2xx" retina layer of the same instance would be sharper on HiDPI screens
+// but timed out when this was set up (2026-10).
+const BASEMAP_STYLE: StyleSpecification = {
+  version: 8,
+  sources: {
+    basemap: {
+      type: "raster",
+      tiles: ["https://maps.heigit.org/raster/osm-carto/wmts/heigit:osm-carto-proxy/webmercator/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+    }
+  },
+  layers: [{ id: "basemap", type: "raster", source: "basemap" }]
+};
 
 const props = defineProps<{
   containerId: string;
@@ -187,11 +198,11 @@ function initMap() {
 
   // Create map instance
   //
-  // The basemap style (@versatiles/style's colorful(), see BASEMAP_STYLE
-  // above) already carries its own OpenStreetMap attribution on its vector
-  // source, so simply leaving the default attribution control enabled
-  // (rather than the attributionControl: false this used to set) is enough
-  // to surface it - required by OSM's license (ODbL) wherever OSM-derived
+  // The basemap style (see BASEMAP_STYLE above) already carries its own
+  // OpenStreetMap attribution on its raster source, so simply leaving the
+  // default attribution control enabled (rather than the
+  // attributionControl: false this used to set) is enough to surface it -
+  // required by OSM's license (ODbL) wherever OSM-derived
   // data is shown, not just a nicety. The boundaries source added in
   // updateMapData() below carries its own separate `attribution` (passed in
   // via the boundariesAttribution prop), which the same control picks up
