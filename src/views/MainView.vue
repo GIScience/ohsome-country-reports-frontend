@@ -1340,10 +1340,18 @@ function resetPlotHeight() {
 // quality tab (backend=oqtApi) with the same topic and indicator, and the
 // region's outline as its area of interest (bpolys accepts GeoJSON). Topic
 // and indicator keys are OQAPI keys on both sides. Per-attribute/per-class
-// variants map to their base indicator - the dashboard has no URL parameter
-// for the attribute. Built ahead of time (geometry read from the boundaries
-// pmtiles, see regionGeometry.ts) so the button can be a plain link.
+// variants map to their base indicator plus the dashboard's
+// `<indicator>--<param>` hash parameter for the selected attribute/class
+// (our suffixes are OQAPI attribute keys / CORINE codes, as the dashboard
+// expects). The "All" option sends no parameter. Built ahead of time
+// (geometry read from the boundaries pmtiles, see regionGeometry.ts) so the
+// button can be a plain link.
 const OHSOME_DASHBOARD_URL = 'https://ohsome-dashboard.heigit.org';
+const DASHBOARD_ATTRIBUTE_PARAMS: Record<string, string> = {
+  'attribute-completeness': 'attribute-completeness--attributes',
+  'roads-thematic-accuracy': 'roads-thematic-accuracy--attribute',
+  'land-cover-thematic-accuracy': 'land-cover-thematic-accuracy--corine_land_cover_class'
+};
 const dashboardLink = ref<string | null>(null);
 let dashboardLinkGeneration = 0;
 
@@ -1363,7 +1371,12 @@ watch(
     const params = new URLSearchParams({ backend: 'oqtApi', topic });
     // Tag distribution isn't an OQAPI indicator - the dashboard then falls
     // back to its own default (mapping-saturation).
-    if (indicatorKey && indicatorKey !== TAG_DISTRIBUTION_KEY) params.set('indicators', indicatorBase(indicatorKey));
+    if (indicatorKey && indicatorKey !== TAG_DISTRIBUTION_KEY) {
+      params.set('indicators', indicatorBase(indicatorKey));
+      const member = indicatorGroupOf(indicatorKey);
+      const attributeParam = member?.suffix ? DASHBOARD_ATTRIBUTE_PARAMS[member.group.base] : undefined;
+      if (attributeParam) params.set(attributeParam, member!.suffix!);
+    }
     params.set('bpolys', JSON.stringify({
       type: 'FeatureCollection',
       features: [{ type: 'Feature', id: label, properties: { id: label, display_name: label }, geometry }]
